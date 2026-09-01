@@ -207,7 +207,11 @@ body.playing #sidebuttons { top: calc(var(--top-inset) + 62px); }
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 0 16px calc(var(--bot-inset) + 8px);
+  /* Centre the title in the SKY, not in the window. The horizon sits at
+     cameraAnchor(0) = 75% of the viewport, so reserving the bottom quarter
+     keeps the logo off the launch pad on short and landscape windows, where
+     a plain centre would drop it straight onto the gantry. */
+  padding: 0 16px calc(var(--bot-inset) + 25vh);
   text-align: center;
 }
 #title.gone { animation: liftaway .6s var(--ease-out) forwards; pointer-events: none; }
@@ -491,7 +495,7 @@ body:not(.playing) .amb { opacity: .35; }
 /* Landscape phones: the answer bar and the HUD are fighting for a 380px-tall
    window, so tighten both rather than letting the world column vanish. */
 @media (max-height: 460px) {
-  #title { gap: 5px; }
+  #title { gap: 5px; padding-bottom: calc(var(--bot-inset) + 14vh); }
   .logo { font-size: clamp(30px, 8vh, 46px); }
   #how ul { padding: 6px 12px; font-size: 15px; }
   .bigbtn { padding: 9px 16px; }
