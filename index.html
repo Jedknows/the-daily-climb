@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>The Daily Climb</title>
+<meta name="description" content="Seven prompts. Twenty-five seconds each. Rarer answers climb higher — from the launch pad to the galactic core." />
+<meta name="theme-color" content="#05070f" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2305070f'/%3E%3Crect x='7' y='3' width='2' height='9' fill='%23ffd166'/%3E%3Crect x='5' y='5' width='2' height='5' fill='%234de3ff'/%3E%3Crect x='9' y='5' width='2' height='5' fill='%234de3ff'/%3E%3Crect x='6' y='12' width='4' height='2' fill='%23ff5252'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="sky" aria-hidden="true"></canvas>
+    <div id="world" aria-hidden="true"></div>
+    <div id="vignette" aria-hidden="true"></div>
+    <div id="flash" aria-hidden="true"></div>
+    <div id="scan" aria-hidden="true"></div>
+
+    <div id="climber" aria-hidden="true"></div>
+
+    <header id="hud" hidden>
+      <div class="gauge" id="gauge-alt">
+        <span class="glabel">ALTITUDE</span>
+        <span class="gvalue"><b id="alt-value">0</b> <i id="alt-unit">m</i></span>
+      </div>
+      <div class="pips" id="pips" role="status" aria-live="polite">
+        <div class="pipbar" id="pipbar"></div>
+        <div class="pipword" id="pipword">LAUNCH PAD</div>
+      </div>
+      <div class="gauge" id="gauge-score">
+        <span class="glabel">SCORE</span>
+        <span class="gvalue"><b id="score-value">0</b></span>
+      </div>
+    </header>
+
+    <div id="sidebuttons">
+      <button id="btn-sound" type="button" aria-label="Turn sound off" aria-pressed="false"></button>
+      <button id="btn-help" type="button" aria-label="How to play">?</button>
+    </div>
+
+    <main id="title">
+      <h1 class="logo" data-text="THE DAILY CLIMB">THE DAILY CLIMB</h1>
+      <p class="tagline">7 prompts &middot; 25 seconds each &middot; rarer answers climb higher</p>
+      <div class="howwrap">
+        <details id="how">
+          <summary>how to play</summary>
+          <ul>
+            <li>7 prompts a day. the same seven for everyone.</li>
+            <li>25 seconds to name one thing.</li>
+            <li>rare answers lift you. obvious ones barely leave the ground.</li>
+            <li>the pick that feels clever? the whole flock thought of it too.</li>
+            <li>700 points is the galactic core. nobody has been there.</li>
+            <li>one climb per day. no second attempts.</li>
+          </ul>
+        </details>
+      </div>
+      <button id="btn-launch" class="bigbtn">&#9650; BEGIN ASCENT &#9650;</button>
+      <div class="titlefoot">
+        <span id="daynum">CLIMB #1</span>
+        <nav class="modes">
+          <button id="btn-endless" type="button" class="modebtn">ENDLESS &#8734;</button>
+        </nav>
+      </div>
+    </main>
+
+    <form id="answerbar" hidden autocomplete="off">
+      <div class="timer" id="timer"><span id="timer-num">25</span></div>
+      <input id="answer" type="text" placeholder="type one answer&hellip;" aria-label="Your answer"
+             autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" maxlength="48" />
+      <button id="btn-submit" type="submit">CLIMB</button>
+    </form>
+
+    <div id="continuebar" hidden>
+      <button id="btn-continue" class="bigbtn">ASCEND &#9650;</button>
+    </div>
+
+    <section id="summary" hidden></section>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

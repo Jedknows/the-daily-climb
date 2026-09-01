@@ -1,0 +1,18 @@
+{
+  "name": "the-daily-climb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Daily Climb — a daily rarity-guessing ascent from the launch pad to the galactic core.",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/build-answers.mjs && vite build",
+    "build:portal": "node scripts/build-answers.mjs && vite build --mode portal",
+    "preview": "vite preview",
+    "keys": "node scripts/build-answers.mjs",
+    "check": "node scripts/check-content.mjs"
+  },
+  "devDependencies": {
+    "vite": "^7.1.5"
+  }
+}

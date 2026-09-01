@@ -1,0 +1,5 @@
+node_modules
+dist
+dist-portal
+.DS_Store
+src/data/keys.generated.js
