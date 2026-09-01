@@ -3,3 +3,5 @@ dist
 dist-portal
 .DS_Store
 src/data/keys.generated.js
+__pycache__/
+*.pyc
