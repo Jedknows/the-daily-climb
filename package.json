@@ -10,7 +10,8 @@
     "build:portal": "node scripts/build-answers.mjs && vite build --mode portal",
     "preview": "vite preview",
     "keys": "node scripts/build-answers.mjs",
-    "check": "node scripts/check-content.mjs"
+    "check": "node scripts/check-content.mjs",
+    "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
     "vite": "^7.1.5"
