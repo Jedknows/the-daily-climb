@@ -339,7 +339,10 @@ body:not(.playing) .amb { opacity: .35; }
   position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--bot-inset) + 12px); z-index: 50;
   width: min(600px, 94vw); animation: barin .45s var(--ease-out) both;
 }
+/* Hidden with opacity and a slide, never display:none — the input inside
+   must keep focus so a phone keyboard stays up between rounds. */
 #answerwrap.away { animation: barout .3s var(--ease-out) forwards; pointer-events: none; }
+#answerbar.rising .timer { opacity: .5; }
 @keyframes barin { from { opacity: 0; transform: translate(-50%, 22px); } }
 @keyframes barout { to { opacity: 0; transform: translate(-50%, 22px); } }
 #answerbar { display: flex; align-items: stretch; gap: 8px; }
@@ -385,7 +388,7 @@ body:not(.playing) .amb { opacity: .35; }
 
 /* ---------- summary ---------- */
 #summary {
-  position: absolute; inset: 0; z-index: 55; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  position: absolute; inset: 0; z-index: 55; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   padding: calc(var(--top-inset) + 14px) 16px calc(var(--bot-inset) + 14px); overflow-y: auto;
   background: linear-gradient(#05070fd9, #05070ff2); animation: fadein .6s ease-out both;
 }
@@ -395,6 +398,30 @@ body:not(.playing) .amb { opacity: .35; }
 .sum-final small { font-size: .32em; color: var(--drift); letter-spacing: .2em; }
 .sum-alt { font-size: clamp(16px, 4vw, 21px); color: var(--cyan); letter-spacing: .1em; text-align: center; }
 .sum-rows { width: min(470px, 94vw); margin: 4px 0; border: 2px solid var(--hair); background: #0a1020b3; }
+
+/* ---------- climb log ---------- */
+.log { width: min(470px, 94vw); margin-top: 6px; }
+.fathom { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: 13px; letter-spacing: .2em; text-transform: uppercase; color: var(--drift); }
+.fathom-sub { color: #5b6f92; }
+.log-grid { position: relative; height: 150px; margin-bottom: 22px; }
+.log-rule { position: absolute; left: 26px; right: 0; border-top: 1px dashed var(--hair); }
+.log-tick { position: absolute; left: 0; transform: translateY(50%); font-size: 10px; color: #5b6f92; }
+.log-cols { position: absolute; inset: 0 0 0 32px; display: grid; grid-template-columns: repeat(7, 1fr); }
+.log-col { position: relative; }
+.log-line { position: absolute; left: 50%; bottom: 0; width: 1px; transform: translateX(-50%); opacity: .45; }
+.log-icon { position: absolute; left: 50%; transform: translate(-50%, 50%); width: 19px; height: 19px; animation: rise-in .7s var(--ease-spring) backwards; }
+.log-icon svg { display: block; width: 100%; height: 100%; }
+@keyframes rise-in { from { opacity: 0; transform: translate(-50%, calc(50% + 40px)); } }
+.log-n { position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%); font-size: 11px; color: #7d93b8b3; }
+.log-answers { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; font-size: 14px; color: #b9cbe6; }
+.log-answers i { font-style: normal; color: #5b6f92; margin-right: 2px; }
+
+/* ---------- distribution ---------- */
+.dist { width: min(470px, 94vw); margin-top: 4px; }
+.dist svg { width: 100%; height: auto; display: block; font-family: var(--font); }
+.dist-cap { margin: 2px 0 0; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); text-shadow: 0 0 6px var(--void), 0 1px 3px var(--void); }
+.dist-sub { margin: 1px 0 0; font-size: 12px; color: #5b6f92; }
+@media (prefers-reduced-motion: reduce) { .log-icon { animation: none; } }
 .sum-row { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid #7d93b81f; font-size: 17px; }
 .sum-row:last-child { border-bottom: 0; }
 .sum-row .n { color: #5b6f92; font-size: 14px; width: 16px; flex: 0 0 auto; }

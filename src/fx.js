@@ -13,7 +13,7 @@ export class Fx {
     this.ctx = canvas.getContext('2d')
     this.sparks = []
     this.bursts = []
-    this.rings = []
+    this.hoops = []
     this.resize()
   }
 
@@ -58,10 +58,10 @@ export class Fx {
 
   // Expanding hoops — the "something notable just happened here" mark.
   rings(x, y, n, colour = '255,82,82') {
-    for (let i = 0; i < n && this.rings.length < 30; i++) {
+    for (let i = 0; i < n && this.hoops.length < 30; i++) {
       const a = Math.random() * Math.PI * 2
       const s = rand(6, 60)
-      this.rings.push({
+      this.hoops.push({
         x, y, vx: Math.cos(a) * s, vy: (Math.sin(a) * s) / 2,
         r: rand(12, 44), life: rand(1.2, 2.2), t: 0, colour,
       })
@@ -114,14 +114,14 @@ export class Fx {
       ctx.fillRect(Math.round(p.x), Math.round(p.y), p.r, p.r)
     }
 
-    for (let i = this.rings.length - 1; i >= 0; i--) {
-      const p = this.rings[i]
+    for (let i = this.hoops.length - 1; i >= 0; i--) {
+      const p = this.hoops[i]
       p.t += dt
       p.x += p.vx * dt
       p.y += p.vy * dt + camShift
       const k = p.t / p.life
       if (k >= 1) {
-        this.rings.splice(i, 1)
+        this.hoops.splice(i, 1)
         continue
       }
       ctx.strokeStyle = `rgba(${p.colour},${(1 - k) * 0.7})`

@@ -4,6 +4,7 @@ import {
 } from './rules.js'
 import { scoreGuess } from './answers.js'
 import { promptsForDay, promptsForEndless, dayNumber, nextResetAt } from './daily.js'
+import { distributionFor, betterThan, recordRun, loadHistory, BUCKET } from './distribution.js'
 import { Sky } from './sky.js'
 import { Fx } from './fx.js'
 import { mountClimber } from './climber.js'
@@ -100,7 +101,7 @@ export class Game {
     this.results = []
     this.questions = []
     this.endlessRuns = 0
-    this.deadline = 0
+    this.timeLeft = 0 // ms, advanced only by the frame loop
     this.lastTick = -1
     this.timers = []
     this.tweens = []
@@ -168,6 +169,15 @@ export class Game {
       e.preventDefault()
       this.submit(el.answer.value)
     })
+    // Enter is the whole game, so it is handled here directly rather than
+    // left to the form's implicit submission — which some mobile keyboards,
+    // IME states and embedded frames never deliver.
+    el.answer.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing) return
+      e.preventDefault()
+      if (this.phase === 'landed') this.nextRound()
+      else this.submit(el.answer.value)
+    })
     el.answer.addEventListener('input', () => {
       sound('type')
       if (!el.rejectHint.hidden) el.rejectHint.hidden = true
@@ -181,22 +191,27 @@ export class Game {
     window.addEventListener('pointerdown', once)
     window.addEventListener('keydown', once)
 
+    // Keyboard players never have to reach for the mouse: Enter (or Space)
+    // advances a landed round and launches from the title. During a round
+    // the form already owns Enter.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.target instanceof HTMLButtonElement && e.key === ' ') return
+      if (this.phase === 'landed') {
+        e.preventDefault()
+        this.nextRound()
+      } else if (this.phase === 'title' && e.key === 'Enter' && !this.el.title.hidden) {
+        e.preventDefault()
+        this.start('daily')
+      }
+    })
+
     window.addEventListener('resize', () => {
       this.sky.resize()
       this.fx.resize()
     })
 
-    // A backgrounded tab must not eat the clock: freeze on hide, refund on
-    // return. The flight tweens run on wall-clock time on purpose — a flight
-    // you weren't watching should be over when you come back, not paused.
-    document.addEventListener('visibilitychange', () => {
-      if (this.phase !== 'round') return
-      if (document.hidden) this.hiddenAt = performance.now()
-      else if (this.hiddenAt) {
-        this.deadline += performance.now() - this.hiddenAt
-        this.hiddenAt = 0
-      }
-    })
   }
 
   syncMuteButton() {
@@ -302,17 +317,19 @@ export class Game {
     const { el } = this
     el.answerwrap.hidden = false
     el.answerwrap.classList.remove('away')
-    el.answerbar.classList.remove('disabled')
+    el.answerbar.classList.remove('disabled', 'rising')
     el.continuebar.hidden = true
     el.rejectHint.hidden = true
-    el.answer.value = ''
-    el.answer.disabled = false
+    // Anything typed during the glide up is kept: the prompt was already
+    // showing, and a fast player shouldn't be punished for reading it.
     el.btnSubmit.disabled = false
     el.timerNum.textContent = String(SECONDS_PER_ROUND)
-    if (!matchMedia('(pointer: coarse)').matches) el.answer.focus()
-    this.deadline = performance.now() + SECONDS_PER_ROUND * 1000
+    if (!matchMedia('(pointer: coarse)').matches) el.answer.focus({ preventScroll: true })
+    // The clock advances only in frame(), never against wall time. A tab
+    // that isn't rendering — backgrounded, or a phone with the screen off —
+    // burns no time, without any visibility bookkeeping to get wrong.
+    this.timeLeft = SECONDS_PER_ROUND * 1000
     this.lastTick = -1
-    this.hiddenAt = 0
   }
 
   submit(raw) {
@@ -372,12 +389,14 @@ export class Game {
     for (let i = 0; i < 12; i++) this.fx.spark(r.left + rand(0, r.width), r.top + rand(0, r.height), 2 + rand(0, 3))
     document.documentElement.style.setProperty('--urgency', '0')
     el.timer.classList.remove('danger')
-    el.answer.disabled = true
+    // The input is never disabled: disabling blurs it, and on a phone that
+    // drops the keyboard, which then has to be summoned again every round.
+    // submit() already refuses anything outside the round.
+    el.answer.value = ''
     el.btnSubmit.disabled = true
     el.rejectHint.hidden = true
     el.answerbar.classList.add('disabled')
     this.later(() => el.answerwrap.classList.add('away'), 350)
-    this.later(() => (el.answerwrap.hidden = true), 700)
 
     if (this.promptCard) {
       const card = this.promptCard
@@ -590,14 +609,13 @@ export class Game {
     const { el } = this
     this.phase = 'plunge'
     const typed = el.answer.value.trim()
-    el.answer.disabled = true
+    el.answer.value = ''
     el.btnSubmit.disabled = true
     el.rejectHint.hidden = true
     el.answerbar.classList.add('disabled')
     document.documentElement.style.setProperty('--urgency', '0')
     el.timer.classList.remove('danger')
     this.later(() => el.answerwrap.classList.add('away'), 200)
-    this.later(() => (el.answerwrap.hidden = true), 550)
 
     if (this.promptCard) {
       const card = this.promptCard
@@ -618,7 +636,10 @@ export class Game {
       this.results.push({
         prompt: this.questions[this.round - 1].prompt, hit: false, tier: null, points: 0, quip: '', text: typed,
       })
-      this.banner({ tierId: null, name: 'NOTHING LIFTED', answer: typed || '—', points: 0, sub: 'never left the pad.', at })
+      this.banner({
+        tierId: null, name: 'NOTHING LIFTED', answer: typed || '—', points: 0, at,
+        sub: typed ? 'never left the pad.' : 'the clock beat you to it.',
+      })
       this.targetScore = this.score
       this.phase = 'landed'
       this.renderPips()
@@ -669,9 +690,13 @@ export class Game {
     this.placePromptCard(this.questions[this.round], 450)
     this.el.answerwrap.hidden = false
     this.el.answerwrap.classList.remove('away')
+    // Live but marked: the box accepts type-ahead during the glide, and
+    // submit() holds anything sent until the round actually opens.
     this.el.answerbar.classList.add('disabled')
+    this.el.answerbar.classList.add('rising')
     this.el.answer.value = ''
     this.el.timerNum.textContent = String(SECONDS_PER_ROUND)
+    if (!matchMedia('(pointer: coarse)').matches) this.el.answer.focus({ preventScroll: true })
     const camFrom = this.camScore
     const camTo = this.score
     this.tween(2200, easeIO, (t) => {
@@ -697,6 +722,12 @@ export class Game {
     this.el.continuebar.hidden = true
     portal.gameplayStop()
     sound('finish')
+    this.history = recordRun({
+      mode: this.mode,
+      day: dayNumber(),
+      score: this.score,
+      tiers: this.results.map((r) => (r.tier ? r.tier.id : 'miss')),
+    })
     this.later(() => this.renderSummary(), 700)
   }
 
@@ -853,13 +884,16 @@ export class Game {
       if (!a.classList.contains('passed') && this.camScore >= Number(a.dataset.score)) a.classList.add('passed')
     }
 
-    if (this.phase === 'round') this.tickClock(now)
+    if (this.phase === 'round') this.tickClock(dt)
     if (this.phase !== 'title') this.renderPips()
     requestAnimationFrame(this.frame)
   }
 
-  tickClock(now) {
-    const left = Math.max(0, this.deadline - now)
+  tickClock(dt) {
+    // dt is capped at 50ms upstream, so a long gap between frames costs the
+    // player one frame's worth of clock, not the gap.
+    this.timeLeft = Math.max(0, this.timeLeft - dt * 1000)
+    const left = this.timeLeft
     const secs = Math.ceil(left / 1000)
     if (secs !== this.lastTick) {
       this.lastTick = secs
@@ -879,24 +913,16 @@ export class Game {
     const band = bandFor(total)
     const alt = altitudeFor(total)
     const s = this.el.summary
-    const rows = this.results
-      .map((r, i) => {
-        const colour = r.tier ? `var(--tier-${r.tier.id})` : 'var(--tier-miss)'
-        return (
-          `<div class="sum-row"><span class="n">${i + 1}</span>` +
-          `<span class="ic">${r.tier ? iconSvg(r.tier.id, 18) : ''}</span>` +
-          `<span class="a${r.text ? '' : ' none'}">${escapeHtml(r.text || 'no answer')}</span>` +
-          `<span class="t" style="color:${colour}">${r.tier ? r.tier.name : '—'}</span>` +
-          `<span class="p">${r.points}</span></div>`
-        )
-      })
-      .join('')
+    const dist = distributionFor(this.questions)
+    const pct = betterThan(dist, total)
+    const best = this.history?.best ?? total
 
     s.innerHTML =
       `<div class="sum-verdict" style="color:var(--tier-${band.tier})">${escapeHtml(band.verdict)}</div>` +
       `<div class="sum-final">${total}<small> / ${MAX_DAY_SCORE}</small></div>` +
       `<div class="sum-alt">you reached ${altitudeText(alt)} — ${escapeHtml(landmarkFor(total).label)}</div>` +
-      `<div class="sum-rows">${rows}</div>` +
+      this.climbLogHtml() +
+      this.distributionHtml(dist, total, pct) +
       `<div class="sum-actions">
          <button id="sum-copy" type="button">COPY RESULT</button>
          <button id="sum-again" type="button" class="ghost">ENDLESS ∞</button>
@@ -905,26 +931,146 @@ export class Game {
     s.hidden = false
 
     const note = $('sum-note')
+    const bestLine = best > total ? ` · your best is ${best}` : total > 0 && best === total && (this.history?.runs?.length ?? 0) > 1 ? ' · a new best' : ''
     if (this.mode === 'daily') {
       const ms = nextResetAt() - new Date()
       const hrs = Math.floor(ms / 3_600_000)
       const mins = Math.floor((ms % 3_600_000) / 60_000)
-      note.textContent = `next climb in ${hrs}h ${mins}m — or keep going in Endless.`
-    } else note.textContent = 'endless run. the daily is still waiting.'
+      note.textContent = `next climb in ${hrs}h ${mins}m — or keep going in Endless${bestLine}.`
+    } else note.textContent = `endless run. the daily is still waiting${bestLine}.`
 
-    $('sum-copy').addEventListener('click', () => this.copyResult(total, band))
+    $('sum-copy').addEventListener('click', () => this.copyResult(total, band, pct))
     $('sum-again').addEventListener('click', () => {
       this.el.summary.hidden = true
       this.start('endless')
     })
   }
 
-  copyResult(total, band) {
+  // Seven columns; each round's icon rises to its tier's height. The mirror
+  // of the dive log: higher is rarer.
+  climbLogHtml() {
+    const cols = this.results
+      .map((r, i) => {
+        const tier = r.tier ? TIERS[r.tier.id] : null
+        const h = tier ? tier.climb : 0.03
+        const colour = tier ? `var(--tier-${tier.id})` : 'var(--tier-miss)'
+        const icon = tier
+          ? iconSvg(tier.id, 19)
+          : `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="${colour}" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7.5" stroke-dasharray="2.8 4"/></svg>`
+        const title = `Round ${i + 1}: ${r.text || 'nothing'}, ${r.points} pts`
+        return (
+          `<div class="log-col" title="${escapeHtml(title)}">` +
+          `<div class="log-line" style="height:calc(${(h * 100).toFixed(1)}% - 8px);background:linear-gradient(0deg, transparent, ${colour})"></div>` +
+          `<div class="log-icon" style="bottom:${(h * 100).toFixed(1)}%;animation-delay:${90 * i}ms;filter:drop-shadow(0 0 5px ${colour})">${icon}</div>` +
+          `<span class="log-n">${i + 1}</span></div>`
+        )
+      })
+      .join('')
+    const grid = [0, 0.25, 0.5, 0.75, 1]
+      .map(
+        (k) =>
+          `<div class="log-rule" style="bottom:${k * 100}%;opacity:${k === 0 ? 1 : 0.5}"></div>` +
+          `<span class="log-tick" style="bottom:${k * 100}%">${k === 0 ? '0' : Math.round(k * 100)}</span>`
+      )
+      .join('')
+    const answers = this.results
+      .map((r, i) => `<span><i>${i + 1}</i> ${escapeHtml(r.text || '—')}</span>`)
+      .join('')
+    return (
+      `<div class="log"><p class="fathom"><span>climb log</span><span class="fathom-sub">higher = rarer</span></p>` +
+      `<div class="log-grid">${grid}<div class="log-cols">${cols}</div></div>` +
+      `<div class="log-answers">${answers}</div></div>`
+    )
+  }
+
+  // The crowd: a smoothed density over 0..700, the part you beat lit up, a
+  // marker where you landed. Same drawing as the dive game's, so the read is
+  // familiar to anyone who has played it.
+  distributionHtml(dist, score, pct) {
+    const raw = dist.buckets
+    const k = [0.06, 0.24, 0.4, 0.24, 0.06]
+    const sm = raw.map((_, i) => {
+      let n = 0
+      let a = 0
+      for (let j = -2; j <= 2; j++) {
+        const idx = i + j
+        if (idx < 0 || idx >= raw.length) continue
+        n += raw[idx] * k[j + 2]
+        a += k[j + 2]
+      }
+      return a > 0 ? n / a : 0
+    })
+    const peak = Math.max(...sm)
+    if (!(peak > 0)) return ''
+    const W = 320
+    const BASE = 78
+    const pts = [[0, BASE]]
+    sm.forEach((v, i) => pts.push([((i + 0.5) / sm.length) * W, BASE - (v / peak) * 68]))
+    pts.push([W, BASE])
+    const x = (Math.min(score, MAX_DAY_SCORE) / MAX_DAY_SCORE) * W
+    let y = BASE
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i]
+      const [x1, y1] = pts[i + 1]
+      if (x >= x0 && x <= x1) {
+        y = y0 + (y1 - y0) * (x1 === x0 ? 0 : (x - x0) / (x1 - x0))
+        break
+      }
+    }
+    let d = `M ${pts[0][0]} ${pts[0][1]}`
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)]
+      const p1 = pts[i]
+      const p2 = pts[i + 1]
+      const p3 = pts[Math.min(pts.length - 1, i + 2)]
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6
+      const c1y = p1[1] + (p2[1] - p0[1]) / 6
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6
+      const c2y = p2[1] - (p3[1] - p1[1]) / 6
+      d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`
+    }
+    const area = `${d} L ${W} ${BASE} L 0 ${BASE} Z`
+    const labelX = Math.min(Math.max(x, 14), W - 14)
+    const ticks = [100, 200, 300, 400, 500, 600]
+      .map((v) => {
+        const tx = (v / MAX_DAY_SCORE) * W
+        const near = Math.abs(tx - x) < 18
+        return (
+          `<line x1="${tx}" y1="${BASE}" x2="${tx}" y2="${BASE + 3.5}" stroke="var(--drift)" stroke-opacity=".5"/>` +
+          (near ? '' : `<text x="${tx}" y="90" text-anchor="middle" font-size="9" fill="var(--drift)" opacity=".55">${v}</text>`)
+        )
+      })
+      .join('')
+    return (
+      `<div class="dist">` +
+      `<svg viewBox="0 0 ${W} 96" role="img" aria-label="Score distribution of ${escapeHtml(dist.label)}; your score beats ${pct}% of them">` +
+      `<defs><linearGradient id="pc-fill" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0%" stop-color="var(--cyan)" stop-opacity=".45"/><stop offset="100%" stop-color="var(--cyan)" stop-opacity=".02"/>` +
+      `</linearGradient><clipPath id="pc-beaten"><rect x="0" y="0" width="${x.toFixed(1)}" height="96"/></clipPath></defs>` +
+      `<path d="${area}" fill="url(#pc-fill)" opacity=".28"/>` +
+      `<path d="${area}" fill="url(#pc-fill)" clip-path="url(#pc-beaten)"/>` +
+      `<path d="${d}" fill="none" stroke="var(--cyan)" stroke-width="1.4" stroke-opacity=".75"/>` +
+      `<line x1="0" y1="${BASE}" x2="${W}" y2="${BASE}" stroke="var(--hair)"/>` +
+      ticks +
+      `<line x1="${x.toFixed(1)}" y1="${(Math.min(y, 74) - 3).toFixed(1)}" x2="${x.toFixed(1)}" y2="${BASE}" stroke="var(--pink)" stroke-width="1.2"/>` +
+      `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="var(--pink)"/>` +
+      `<text x="${labelX.toFixed(1)}" y="90" text-anchor="middle" font-size="9" letter-spacing=".12em" fill="var(--pink)">YOU</text>` +
+      `<text x="0" y="90" font-size="9" fill="var(--drift)" opacity=".6">0</text>` +
+      `<text x="${W}" y="90" text-anchor="end" font-size="9" fill="var(--drift)" opacity=".6">${MAX_DAY_SCORE}</text>` +
+      `</svg>` +
+      `<p class="dist-cap">higher than ${pct}% of ${escapeHtml(dist.label)}</p>` +
+      (dist.modeled ? `<p class="dist-sub">expected spread for today's seven — real climbs will replace it</p>` : '') +
+      `</div>`
+    )
+  }
+
+  copyResult(total, band, pct) {
     const glyphs = this.results.map((r) => (r.tier ? TIERS[r.tier.id].emoji : '⬛')).join('')
     const label = this.mode === 'daily' ? `Climb #${dayNumber()}` : 'Endless Climb'
     const text =
       `The Daily Climb — ${label}\n${glyphs}\n` +
-      `${total}/${MAX_DAY_SCORE} · ${altitudeText(altitudeFor(total))} · ${band.verdict}`
+      `${total}/${MAX_DAY_SCORE} · ${altitudeText(altitudeFor(total))} · ${band.verdict}` +
+      (typeof pct === 'number' ? `\nhigher than ${pct}% of climbers` : '')
     const btn = $('sum-copy')
     const done = (ok) => {
       btn.textContent = ok ? 'COPIED ✓' : 'COPY FAILED'
