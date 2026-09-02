@@ -2,7 +2,8 @@ import {
   ROUNDS_PER_DAY, SECONDS_PER_ROUND, MAX_DAY_SCORE, TIERS, TIER_IDS,
   altitudeFor, formatAltitude, altitudeText, landmarkFor, bandFor, cameraAnchor,
 } from './rules.js'
-import { scoreGuess } from './answers.js'
+import { scoreGuess, questionById } from './answers.js'
+import { normalize } from './normalize.js'
 import { promptsForDay, promptsForEndless, dayNumber, nextResetAt } from './daily.js'
 import { distributionFor, betterThan, recordRun, loadHistory, BUCKET } from './distribution.js'
 import { Sky } from './sky.js'
@@ -63,13 +64,6 @@ const AMBIENT = [
   [700, 'L', 'THE GALACTIC CORE — a perfect climb ends here', 1],
 ]
 
-// "coke" -> "Coke". Text the player typed with any capitals is left alone.
-function displayCase(text) {
-  const t = String(text ?? '').trim()
-  if (!t || t !== t.toLowerCase()) return t
-  return t.replace(/(^|[\s\-'’(])(\p{L})/gu, (m, pre, ch) => pre + ch.toUpperCase())
-}
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 }
@@ -110,6 +104,7 @@ export class Game {
     this.time = 0
     this.lastOffset = 0
 
+    this.debug = { questionById } // for driving a specific prompt from the console
     this.buildWorld()
     this.wire()
     this.el.daynum.textContent = 'CLIMB #' + dayNumber()
@@ -381,7 +376,7 @@ export class Game {
     const from = this.score
     const to = Math.min(MAX_DAY_SCORE, from + result.points)
     const colour = `var(--tier-${tier.id})`
-    const shown = displayCase(result.text)
+    const shown = result.name // the canonical answer the guess counted as
 
     // submit fx: the input sparks and slides away; the round's card lifts off.
     sound('submit')
@@ -434,7 +429,7 @@ export class Game {
     tag.className = 'plunge-tag'
     tag.style.setProperty('--tc', colour)
     tag.style.top = this.yFor(from) + 'px'
-    tag.innerHTML = `“${escapeHtml(shown.toUpperCase())}”<b>▲</b>`
+    tag.innerHTML = `“${escapeHtml(result.text.toUpperCase())}”<b>▲</b>`
     el.world.appendChild(tag)
     sound('lift')
 
@@ -528,14 +523,16 @@ export class Game {
     this.score = to
     this.targetScore = to
     this.round++
-    this.results.push({ prompt: this.questions[this.round - 1].prompt, ...result, text: shown })
+    this.results.push({ prompt: this.questions[this.round - 1].prompt, ...result, text: shown, typed: result.text })
 
     for (const line of this.ladder) if (line.tier === tier.id) line.el.style.opacity = '0'
+    this.climber.pump()
 
     const banner = this.banner({
       tierId: tier.id,
       name: tier.name.toUpperCase(),
       answer: shown,
+      from: result.inferred ? result.text : null,
       points: result.points,
       sub: result.quip,
       at: to,
@@ -649,7 +646,7 @@ export class Game {
     }, 900)
   }
 
-  banner({ tierId, name, answer, points, sub, at }) {
+  banner({ tierId, name, answer, from = null, points, sub, at }) {
     const b = document.createElement('div')
     b.className = 'landed' + (tierId ? '' : ' miss') + (at < 100 ? ' lowsky' : '')
     b.style.top = this.yFor(at) - 30 + 'px'
@@ -661,7 +658,16 @@ export class Game {
       `<div class="tans"></div>` +
       `<div class="tpts"><b>+${points} PTS</b>${points > 0 ? ` &middot; ${alt} up` : ''}</div>` +
       `<div class="tsub"></div>`
-    b.querySelector('.tans').textContent = answer ? `“${answer}”` : '—'
+    const tans = b.querySelector('.tans')
+    tans.textContent = answer ? `“${answer}”` : '—'
+    // The guess got here through shorthand: show what it counted as, and
+    // underneath, what was actually typed.
+    if (from && normalize(from) !== normalize(answer)) {
+      const f = document.createElement('span')
+      f.className = 'from'
+      f.textContent = `from “${from}”`
+      tans.appendChild(f)
+    }
     b.querySelector('.tsub').textContent = sub
     this.el.world.appendChild(b)
     this.landedCard = b

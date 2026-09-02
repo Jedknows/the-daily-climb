@@ -19,3 +19,25 @@ export function keyHash(questionId, normalized) {
   }
   return a.toString(36) + b.toString(36)
 }
+
+// Canonical answer names ship in the bundle so the reveal can say "Golden
+// Retriever" when you typed "golden". They are lightly scrambled — UTF-8
+// bytes XORed with a per-question key, then base64 — which keeps a
+// view-source skim from spoiling the board without pretending to be
+// cryptography.
+export function scramble(text, key) {
+  const k = keyHash('name', key)
+  const bytes = new TextEncoder().encode(text)
+  for (let i = 0; i < bytes.length; i++) bytes[i] ^= k.charCodeAt(i % k.length) & 0x7f
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
+
+export function unscramble(enc, key) {
+  const k = keyHash('name', key)
+  const bin = atob(enc)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) ^ (k.charCodeAt(i % k.length) & 0x7f)
+  return new TextDecoder().decode(bytes)
+}

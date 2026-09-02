@@ -81,8 +81,21 @@ stored as salted hashes and quips live in a shared pool addressed by index —
 so the shipped bundle can score a guess without containing a readable answer
 list. That file is generated; it is not in git.
 
-Currently **50 questions · 2,619 answers**. The daily draw reshuffles all 50
-each cycle and deals 7 a day, so nothing repeats inside a week.
+Currently **60 questions · 3,450 answers**. The daily draw reshuffles the bank
+each cycle and deals 7 a day, so nothing repeats inside a cycle. The tier
+rubric is in `docs/tiers.md`.
+
+### Inference
+
+Players don't have to type the whole name. On top of full names and authored
+aliases, `npm run keys` derives shorthand from every answer — each distinctive
+word of a multi-word name, the space-less join, and for longer names the first
+and last word pairs — so `golden` counts as Golden Retriever and `pearl
+earring` as the Vermeer. Ambiguous shorthand ("shepherd", "weasley") resolves
+to the most common candidate, so a lazy word never buys a rare score; explicit
+names and aliases always win. The reveal names the canonical answer, with
+*from "golden"* underneath when shorthand did the work. Every accepted form is
+listed in `docs/inference.md`, regenerated on each build.
 
 ## CrazyGames notes
 

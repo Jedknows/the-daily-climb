@@ -108,7 +108,7 @@ button, input { font-family: inherit; }
 }
 /* Perched on an Astronomical banner, the mascot takes the trophy's slot —
    and grows into it, so it reads as the trophy rather than a bystander. */
-#climber.perched { transform: scale(1.7); }
+#climber.perched { transform: scale(1.35); }
 .mascot { position: relative; width: 100%; height: 100%; cursor: pointer; animation: hover 3.2s var(--ease-io) infinite; }
 @keyframes hover { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-6px) rotate(2deg); } }
 .mascot::before {
@@ -122,8 +122,9 @@ button, input { font-family: inherit; }
 .mascot.gilding::before { animation: gild 1.1s var(--ease-out) 1 both; }
 @keyframes gild { 0% { opacity: 1; transform: scale(1.7); } 55% { opacity: .86; transform: scale(1.18); } 100% { opacity: .48; transform: scale(.94); } }
 .sprite { display: block; width: 100%; height: 100%; overflow: visible; transform-origin: 50% 55%; }
-.sprite .rig { will-change: opacity; }
-.sprite .flame { animation: flicker .16s steps(2, end) infinite; transform-origin: 13px 17px; }
+.sprite .pump { transform-box: fill-box; transform-origin: 50% 100%; }
+.sprite .pump.go { animation: pump .6s var(--ease-snap) 1; }
+@keyframes pump { 0% { transform: scale(1); } 35% { transform: scale(1.34, 1.24); } 65% { transform: scale(.95, 1.04); } 100% { transform: scale(1); } }
 @keyframes flicker { 50% { transform: scaleY(.72) scaleX(1.15); opacity: .85; } }
 .sprite.celebrate { animation: celebrate 1.2s var(--ease-io) 1; }
 @keyframes celebrate { 0% { transform: rotate(0); } 50% { transform: translateY(-14px) rotate(360deg); } 100% { transform: rotate(720deg); } }
@@ -142,7 +143,7 @@ button, input { font-family: inherit; }
 .mascot.gold .blub { color: var(--gold); text-shadow: 0 0 9px #ffd166b8; }
 .blub.show { animation: blub-up 1s ease-out; }
 @keyframes blub-up { 0% { opacity: 0; transform: translateY(6px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
-@media (prefers-reduced-motion: reduce) { .mascot, .sprite, .sprite .flame { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .mascot, .sprite, .sprite .pump { animation: none !important; } }
 
 /* ---------- HUD ---------- */
 #hud {
@@ -313,6 +314,7 @@ body.playing #sidebuttons { top: calc(var(--top-inset) + 62px); }
   text-shadow: 0 0 22px var(--tc), 0 3px 0 #0009, 0 0 3px #05070f;
 }
 .landed .tans { color: var(--foam); letter-spacing: .08em; margin-top: 2px; font-size: 19px; text-shadow: 0 1px 0 #05070f, 0 0 10px #05070fcc; }
+.landed .tans .from { display: block; margin-top: 1px; font-size: 14px; letter-spacing: .06em; color: #9db2d4; }
 .landed .tpts { color: var(--foam); margin-top: 4px; font-size: 22px; text-shadow: 0 1px 0 #05070f, 0 0 10px #05070fcc; }
 .landed .tpts b { color: var(--tc); font-weight: 400; }
 .landed .tsub { color: #b9cbe6; margin-top: 2px; font-size: 16px; font-style: italic; text-shadow: 0 1px 0 #05070f, 0 0 8px #05070fcc; }
