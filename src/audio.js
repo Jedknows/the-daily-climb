@@ -1,6 +1,9 @@
-// Every sound is synthesised. No audio files means no extra requests, no
-// decode cost on a cold portal load, and a bundle that stays a few hundred KB
-// — which is the difference between a fast first play and a bounce.
+// Every sound is synthesised — no files, no decode on a cold portal load.
+//
+// The event table follows the dive game's bus closely (same envelope shapes,
+// same registers) so the game FEELS the same, with the one big cue flipped:
+// a landing there is a thud that falls in pitch; a landing here settles from
+// above. "lift" replaces "sink".
 
 let ctx = null
 let master = null
@@ -19,19 +22,16 @@ function ac() {
     if (!C) return null
     ctx = new C()
     master = ctx.createGain()
-    master.gain.value = 0.34
+    master.gain.value = 0.38
     master.connect(ctx.destination)
   }
   if (ctx.state === 'suspended') ctx.resume().catch(() => {})
   return ctx
 }
 
-// Browsers won't start audio until the player does something; the first
-// gesture unlocks the context for the rest of the session.
 export function unlock() {
   ac()
 }
-
 export function isMuted() {
   return muted
 }
@@ -46,8 +46,8 @@ export function setMuted(v) {
   } catch { /* nothing to persist to */ }
   listeners.forEach((fn) => fn(muted))
 }
-// The platform mute sits ABOVE the in-game toggle: when CrazyGames mutes the
-// frame, nothing in the game can turn the sound back on.
+// Platform mute sits ABOVE the in-game toggle: when the portal mutes the
+// frame, nothing in here can turn sound back on.
 export function setSdkMuted(v) {
   sdkMuted = !!v
   listeners.forEach((fn) => fn(muted))
@@ -58,7 +58,8 @@ export function onMuteChange(fn) {
 }
 const silent = () => muted || sdkMuted
 
-function tone({ freq, to, dur = 0.15, type = 'square', gain = 0.3, delay = 0, sweep = 0 }) {
+// One oscillator with an optional pitch sweep (f0 -> f1) and lowpass.
+function tone({ f0, f1, dur = 0.15, type = 'square', peak = 0.2, a = 0.008, lp = 0, delay = 0 }) {
   if (silent()) return
   const c = ac()
   if (!c) return
@@ -66,81 +67,114 @@ function tone({ freq, to, dur = 0.15, type = 'square', gain = 0.3, delay = 0, sw
   const osc = c.createOscillator()
   const g = c.createGain()
   osc.type = type
-  osc.frequency.setValueAtTime(freq, t0)
-  if (to) osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur)
-  else if (sweep) osc.frequency.linearRampToValueAtTime(Math.max(1, freq + sweep), t0 + dur)
+  osc.frequency.setValueAtTime(f0, t0)
+  if (f1) osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t0 + dur)
   g.gain.setValueAtTime(0.0001, t0)
-  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012)
+  g.gain.exponentialRampToValueAtTime(peak, t0 + a)
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-  osc.connect(g)
+  let node = osc
+  if (lp) {
+    const f = c.createBiquadFilter()
+    f.type = 'lowpass'
+    f.frequency.value = lp
+    osc.connect(f)
+    node = f
+  }
+  node.connect(g)
   g.connect(master)
   osc.start(t0)
   osc.stop(t0 + dur + 0.03)
 }
 
-function noise({ dur = 0.3, gain = 0.2, delay = 0, hp = 320, lp = 5200 }) {
+// Filtered noise; `sweepTo` slides the lowpass over the duration, which is
+// what turns a hiss into a whoosh.
+function noise({ dur = 0.3, peak = 0.2, lp = 4000, hp = 0, sweepTo = 0, delay = 0 }) {
   if (silent()) return
   const c = ac()
   if (!c) return
   const t0 = c.currentTime + delay
   const len = Math.max(1, Math.floor(c.sampleRate * dur))
   const buf = c.createBuffer(1, len, c.sampleRate)
-  const data = buf.getChannelData(0)
-  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
   const src = c.createBufferSource()
   src.buffer = buf
-  const hpf = c.createBiquadFilter()
-  hpf.type = 'highpass'
-  hpf.frequency.value = hp
   const lpf = c.createBiquadFilter()
   lpf.type = 'lowpass'
-  lpf.frequency.value = lp
+  lpf.frequency.setValueAtTime(lp, t0)
+  if (sweepTo) lpf.frequency.exponentialRampToValueAtTime(sweepTo, t0 + dur)
+  let node = lpf
+  src.connect(lpf)
+  if (hp) {
+    const hpf = c.createBiquadFilter()
+    hpf.type = 'highpass'
+    hpf.frequency.value = hp
+    lpf.connect(hpf)
+    node = hpf
+  }
   const g = c.createGain()
-  g.gain.setValueAtTime(gain, t0)
+  g.gain.setValueAtTime(peak, t0)
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-  src.connect(hpf)
-  hpf.connect(lpf)
-  lpf.connect(g)
+  node.connect(g)
   g.connect(master)
   src.start(t0)
 }
 
-const arp = (notes, step = 0.075, opts = {}) =>
-  notes.forEach((f, i) => tone({ freq: f, dur: 0.16, delay: i * step, ...opts }))
+const arp = (notes, { step = 0.1, dur = 0.5, peak = 0.15, lp = 3000, type = 'square' } = {}) =>
+  notes.forEach((f0, i) => tone({ f0, dur, peak, lp, type, delay: i * step }))
 
-export const sfx = {
-  ui: () => tone({ freq: 520, dur: 0.05, gain: 0.16, type: 'square' }),
-  type: () => tone({ freq: 900 + Math.random() * 180, dur: 0.02, gain: 0.045, type: 'square' }),
-  launch: () => {
-    noise({ dur: 1.1, gain: 0.3, hp: 90, lp: 1800 })
-    tone({ freq: 70, to: 220, dur: 1.0, type: 'sawtooth', gain: 0.2 })
+const EVENTS = {
+  submit: () => tone({ f0: 1150, dur: 0.16, a: 0.003, peak: 0.16 }),
+  reject: () => {
+    noise({ dur: 0.22, lp: 420, peak: 0.2 })
+    tone({ f0: 150, f1: 62, dur: 0.36, peak: 0.22, lp: 700 })
   },
-  tick: () => tone({ freq: 1180, dur: 0.035, gain: 0.11, type: 'square' }),
-  warn: () => tone({ freq: 300, to: 200, dur: 0.16, gain: 0.2, type: 'square' }),
-  miss: () => {
-    tone({ freq: 200, to: 70, dur: 0.5, type: 'sawtooth', gain: 0.22 })
-    noise({ dur: 0.4, gain: 0.1, hp: 120, lp: 900 })
+  tierline: () => tone({ type: 'triangle', f0: 780, f1: 1560, dur: 0.07, peak: 0.13, lp: 2500 }),
+  // The answer lifting off: a rising sweep where the dive had a falling one.
+  lift: () => {
+    tone({ f0: 1150, dur: 0.7, a: 0.01, peak: 0.1 })
+    noise({ dur: 1.3, lp: 180, sweepTo: 1400, peak: 0.16 })
+    tone({ f0: 60, f1: 300, dur: 1.3, peak: 0.1 })
   },
-  // Each tier gets a distinctly taller sound — the reward IS the fanfare.
-  dust: () => arp([392, 440], 0.07, { gain: 0.18 }),
-  tooclever: () => {
-    tone({ freq: 520, to: 300, dur: 0.28, type: 'sawtooth', gain: 0.24 })
-    tone({ freq: 260, to: 150, dur: 0.34, type: 'square', gain: 0.16, delay: 0.05 })
+  land_small: () => {
+    tone({ f0: 140, f1: 70, dur: 0.25, peak: 0.28, lp: 600 })
+    noise({ dur: 0.14, lp: 500, peak: 0.1 })
   },
-  flocker: () => arp([523, 659, 784], 0.07),
-  rare: () => arp([523, 659, 784, 1047], 0.068, { gain: 0.28 }),
-  farout: () => {
-    arp([523, 659, 784, 1047, 1319], 0.062, { gain: 0.3 })
-    noise({ dur: 0.6, gain: 0.09, hp: 2200, delay: 0.1 })
+  land_big: () => {
+    tone({ f0: 80, f1: 45, dur: 0.6, peak: 0.38 })
+    noise({ dur: 0.7, lp: 900, sweepTo: 200, peak: 0.18, delay: 0.02 })
+    tone({ type: 'triangle', f0: 523, dur: 0.4, peak: 0.09, delay: 0.15 })
   },
   astronomical: () => {
-    arp([523, 659, 784, 1047, 1319, 1568, 2093], 0.058, { gain: 0.32, type: 'square' })
-    arp([262, 330, 392, 523], 0.058, { gain: 0.2, type: 'triangle', dur: 0.4 })
-    noise({ dur: 1.2, gain: 0.11, hp: 1800, delay: 0.16 })
+    tone({ f0: 60, f1: 40, dur: 1.2, peak: 0.34 })
+    arp([784, 988, 1175, 1568], { step: 0.13, dur: 0.7, peak: 0.15, lp: 3000 })
+    noise({ dur: 1.4, lp: 2500, hp: 1200, peak: 0.05, delay: 0.3 })
   },
-  finish: () => arp([392, 523, 659, 784, 1047], 0.11, { gain: 0.26, type: 'triangle' }),
+  miss: () => {
+    tone({ f0: 220, f1: 52, dur: 0.7, peak: 0.24 })
+    noise({ dur: 0.5, lp: 400, peak: 0.14, delay: 0.05 })
+  },
+  tick: () => {
+    tone({ f0: 880, dur: 0.07, peak: 0.16 })
+    tone({ f0: 880, dur: 0.05, peak: 0.06, delay: 0.12 })
+  },
+  blub: () => {
+    const e = 0.85 + 0.45 * Math.random()
+    tone({ f0: 260 * e, f1: 720 * e, dur: 0.13, peak: 0.22, lp: 2200 })
+    noise({ dur: 0.05, lp: 1800, hp: 700, peak: 0.05 })
+  },
+  begin: () => {
+    noise({ dur: 1.1, lp: 2000, sweepTo: 240, peak: 0.15 })
+    tone({ f0: 110, f1: 48, dur: 1.2, peak: 0.32 })
+    tone({ type: 'triangle', f0: 784, dur: 0.5, peak: 0.12, lp: 3000 })
+    tone({ type: 'triangle', f0: 523, dur: 0.75, peak: 0.12, lp: 3000, delay: 0.22 })
+  },
+  finish: () => arp([392, 523, 659, 784, 1047], { step: 0.11, dur: 0.5, peak: 0.2, type: 'triangle' }),
+  ui: () => tone({ f0: 520, dur: 0.05, peak: 0.14 }),
+  type: () => tone({ f0: 900 + Math.random() * 180, dur: 0.02, peak: 0.04 }),
 }
 
-export function playTier(tierId) {
-  ;(sfx[tierId] ?? sfx.dust)()
+export function event(name) {
+  ;(EVENTS[name] ?? (() => {}))()
 }
+export const sfx = new Proxy({}, { get: (_, k) => () => event(k) })

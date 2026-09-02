@@ -12,11 +12,13 @@
   <div id="stage">
     <canvas id="sky" aria-hidden="true"></canvas>
     <div id="world" aria-hidden="true"></div>
+    <canvas id="fx" aria-hidden="true"></canvas>
     <div id="vignette" aria-hidden="true"></div>
+    <div id="spot" aria-hidden="true"></div>
     <div id="flash" aria-hidden="true"></div>
     <div id="scan" aria-hidden="true"></div>
 
-    <div id="climber" aria-hidden="true"></div>
+    <div id="climber"></div>
 
     <header id="hud" hidden>
       <div class="gauge" id="gauge-alt">
@@ -46,7 +48,7 @@
           <summary>how to play</summary>
           <ul>
             <li>7 prompts a day. the same seven for everyone.</li>
-            <li>25 seconds to name one thing.</li>
+            <li>25 seconds to name one thing. a guess that doesn't land, you try again.</li>
             <li>rare answers lift you. obvious ones barely leave the ground.</li>
             <li>the pick that feels clever? the whole flock thought of it too.</li>
             <li>700 points is the galactic core. nobody has been there.</li>
@@ -63,12 +65,17 @@
       </div>
     </main>
 
-    <form id="answerbar" hidden autocomplete="off">
-      <div class="timer" id="timer"><span id="timer-num">25</span></div>
-      <input id="answer" type="text" placeholder="type one answer&hellip;" aria-label="Your answer"
-             autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" maxlength="48" />
-      <button id="btn-submit" type="submit">CLIMB</button>
-    </form>
+    <div id="countdown" hidden>ascending &middot; the clock starts in <b>3</b></div>
+
+    <div id="answerwrap" hidden>
+      <div id="reject-hint" class="reject-hint" hidden></div>
+      <form id="answerbar" autocomplete="off">
+        <div class="timer" id="timer"><span id="timer-num">25</span></div>
+        <input id="answer" type="text" placeholder="type one answer&hellip;" aria-label="Your answer"
+               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" maxlength="48" />
+        <button id="btn-submit" type="submit">CLIMB</button>
+      </form>
+    </div>
 
     <div id="continuebar" hidden>
       <button id="btn-continue" class="bigbtn">ASCEND &#9650;</button>

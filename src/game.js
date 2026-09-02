@@ -1,19 +1,35 @@
 import {
-  ROUNDS_PER_DAY, SECONDS_PER_ROUND, MAX_DAY_SCORE, TIERS, LADDER,
+  ROUNDS_PER_DAY, SECONDS_PER_ROUND, MAX_DAY_SCORE, TIERS, TIER_IDS,
   altitudeFor, formatAltitude, altitudeText, landmarkFor, bandFor, cameraAnchor,
 } from './rules.js'
 import { scoreGuess } from './answers.js'
 import { promptsForDay, promptsForEndless, dayNumber, nextResetAt } from './daily.js'
 import { Sky } from './sky.js'
+import { Fx } from './fx.js'
 import { mountClimber } from './climber.js'
-import { sfx, playTier, unlock, isMuted, toggleMuted, onMuteChange } from './audio.js'
+import { iconSvg } from './icons.js'
+import { event as sound, unlock, isMuted, toggleMuted, onMuteChange } from './audio.js'
 import * as portal from './portal.js'
 
 const WORLD_PX = 12 // screen pixels per point of score
+const LEAD = 5 // points the camera runs ahead of the answer in flight
 const $ = (id) => document.getElementById(id)
+const rand = (a, b) => a + Math.random() * (b - a)
+const easeIO = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+const easeSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2
 
-// Flavour pinned along the climb, on top of the LADDER rungs. `major` lines
-// are the zone boundaries and get bigger type.
+// How long each tier's answer takes to fly, and the curve it flies on. The
+// better the answer, the longer you get to watch it go — the flight IS the
+// reward, so the reward scales.
+const FLIGHT = {
+  dust: { dur: 3400, ease: easeSine },
+  tooclever: { dur: 3000, ease: easeIO },
+  flocker: { dur: 3000, ease: easeIO },
+  rare: { dur: 3400, ease: easeIO },
+  farout: { dur: 4300, ease: easeIO },
+  astronomical: { dur: 4600, ease: easeIO },
+}
+
 const AMBIENT = [
   [8, 'L', 'the pad falls away'],
   [30, 'R', 'birds cruise about here'],
@@ -46,35 +62,52 @@ const AMBIENT = [
   [700, 'L', 'THE GALACTIC CORE — a perfect climb ends here', 1],
 ]
 
+// "coke" -> "Coke". Text the player typed with any capitals is left alone.
+function displayCase(text) {
+  const t = String(text ?? '').trim()
+  if (!t || t !== t.toLowerCase()) return t
+  return t.replace(/(^|[\s\-'’(])(\p{L})/gu, (m, pre, ch) => pre + ch.toUpperCase())
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+}
+
 export class Game {
   constructor() {
     this.el = {
-      stage: $('stage'), sky: $('sky'), world: $('world'), climber: $('climber'),
-      hud: $('hud'), altValue: $('alt-value'), altUnit: $('alt-unit'),
-      scoreValue: $('score-value'), pipbar: $('pipbar'), pipword: $('pipword'),
-      title: $('title'), daynum: $('daynum'), answerbar: $('answerbar'),
-      answer: $('answer'), timer: $('timer'), timerNum: $('timer-num'),
-      continuebar: $('continuebar'), btnContinue: $('btn-continue'),
-      summary: $('summary'), vignette: $('vignette'), flash: $('flash'),
+      stage: $('stage'), sky: $('sky'), fx: $('fx'), world: $('world'), climber: $('climber'),
+      hud: $('hud'), altValue: $('alt-value'), altUnit: $('alt-unit'), scoreValue: $('score-value'),
+      pipbar: $('pipbar'), pipword: $('pipword'), title: $('title'), daynum: $('daynum'),
+      countdown: $('countdown'), answerwrap: $('answerwrap'), answerbar: $('answerbar'),
+      answer: $('answer'), btnSubmit: $('btn-submit'), timer: $('timer'), timerNum: $('timer-num'),
+      rejectHint: $('reject-hint'), continuebar: $('continuebar'), btnContinue: $('btn-continue'),
+      summary: $('summary'), vignette: $('vignette'), spot: $('spot'), flash: $('flash'),
       btnSound: $('btn-sound'), btnHelp: $('btn-help'), btnLaunch: $('btn-launch'),
       btnEndless: $('btn-endless'), how: $('how'),
     }
 
     this.sky = new Sky(this.el.sky, WORLD_PX)
-    this.climber = mountClimber(this.el.climber)
+    this.fx = new Fx(this.el.fx)
+    this.climber = mountClimber(this.el.climber, { onPoke: () => this.poke() })
 
     this.mode = 'daily'
     this.phase = 'title'
     this.score = 0
     this.camScore = 0
     this.targetScore = 0
-    this.round = 0
+    this.round = 0 // prompts completed; questions[round] is the live one
     this.results = []
     this.questions = []
     this.endlessRuns = 0
     this.deadline = 0
     this.lastTick = -1
     this.timers = []
+    this.tweens = []
+    this.ladder = []
+    this.perch = null
+    this.time = 0
+    this.lastOffset = 0
 
     this.buildWorld()
     this.wire()
@@ -86,6 +119,20 @@ export class Game {
     requestAnimationFrame(this.frame)
   }
 
+  // ---------- geometry ----------
+
+  // Top (px) of a score inside the world column.
+  yFor(score) {
+    return (MAX_DAY_SCORE - score) * WORLD_PX
+  }
+  // Where a score currently sits on screen.
+  screenY(score) {
+    return this.yFor(score) + this.lastOffset
+  }
+  centreX() {
+    return window.innerWidth / 2
+  }
+
   // ---------- setup ----------
 
   buildWorld() {
@@ -93,11 +140,8 @@ export class Game {
     for (const [score, side, text, major] of AMBIENT) {
       const d = document.createElement('div')
       d.className = 'amb ' + side + (major ? ' major' : '')
-      d.style.top = (MAX_DAY_SCORE - score) * WORLD_PX + 'px'
-      d.innerHTML =
-        side === 'L'
-          ? '<span class="dash">──</span> ' + text
-          : text + ' <span class="dash">──</span>'
+      d.style.top = this.yFor(score) + 'px'
+      d.innerHTML = side === 'L' ? '<span class="dash">──</span> ' + text : text + ' <span class="dash">──</span>'
       d.dataset.score = String(score)
       frag.appendChild(d)
     }
@@ -107,18 +151,16 @@ export class Game {
 
   wire() {
     const { el } = this
-
     el.btnLaunch.addEventListener('click', () => this.start('daily'))
     el.btnEndless.addEventListener('click', () => this.start('endless'))
     el.btnContinue.addEventListener('click', () => this.nextRound())
     el.btnSound.addEventListener('click', () => {
       toggleMuted()
-      sfx.ui()
+      sound('ui')
     })
     el.btnHelp.addEventListener('click', () => {
       el.how.open = !el.how.open
-      el.how.scrollIntoView?.({ block: 'nearest' })
-      sfx.ui()
+      sound('ui')
     })
     onMuteChange(() => this.syncMuteButton())
 
@@ -126,10 +168,11 @@ export class Game {
       e.preventDefault()
       this.submit(el.answer.value)
     })
-    el.answer.addEventListener('input', () => sfx.type())
+    el.answer.addEventListener('input', () => {
+      sound('type')
+      if (!el.rejectHint.hidden) el.rejectHint.hidden = true
+    })
 
-    // One unlock for the whole session; audio contexts stay suspended until
-    // a real gesture touches them.
     const once = () => {
       unlock()
       window.removeEventListener('pointerdown', once)
@@ -138,15 +181,18 @@ export class Game {
     window.addEventListener('pointerdown', once)
     window.addEventListener('keydown', once)
 
-    window.addEventListener('resize', () => this.sky.resize())
+    window.addEventListener('resize', () => {
+      this.sky.resize()
+      this.fx.resize()
+    })
 
-    // A tab that goes to sleep must not eat the clock: freeze on hide and
-    // give the time back on return.
+    // A backgrounded tab must not eat the clock: freeze on hide, refund on
+    // return. The flight tweens run on wall-clock time on purpose — a flight
+    // you weren't watching should be over when you come back, not paused.
     document.addEventListener('visibilitychange', () => {
-      if (this.phase !== 'asking') return
-      if (document.hidden) {
-        this.hiddenAt = performance.now()
-      } else if (this.hiddenAt) {
+      if (this.phase !== 'round') return
+      if (document.hidden) this.hiddenAt = performance.now()
+      else if (this.hiddenAt) {
         this.deadline += performance.now() - this.hiddenAt
         this.hiddenAt = 0
       }
@@ -169,6 +215,10 @@ export class Game {
   clearTimers() {
     this.timers.forEach(clearTimeout)
     this.timers = []
+    this.tweens = []
+  }
+  tween(dur, ease, upd, done) {
+    this.tweens.push({ t0: performance.now(), dur, ease, upd, done })
   }
 
   // ---------- run lifecycle ----------
@@ -181,6 +231,7 @@ export class Game {
     this.targetScore = 0
     this.round = 0
     this.results = []
+    this.perch = null
     this.questions =
       mode === 'daily' ? promptsForDay() : promptsForEndless(Date.now() ^ (++this.endlessRuns * 2654435761))
 
@@ -190,30 +241,49 @@ export class Game {
     this.el.summary.innerHTML = ''
     this.el.hud.hidden = false
     this.el.scoreValue.textContent = '0'
-    this.renderPips()
-    this.el.world.querySelectorAll('.card, .landed').forEach((n) => n.remove())
+    this.el.world.querySelectorAll('.card, .landed, .tierline, .plunge-tag').forEach((n) => n.remove())
+    this.el.stage.querySelectorAll('.swarm').forEach((n) => n.remove())
     this.ambients.forEach((a) => a.classList.remove('passed'))
+    this.climber.setGold(false, { quiet: true })
+    this.climber.react(null)
+    this.phase = 'intro'
+    this.renderPips()
 
-    sfx.launch()
-    this.climber.setState('boost', 900)
+    sound('begin')
+    this.climber.react('boost', 900)
     portal.gameplayStart()
 
+    // "the clock starts in 3": the same beat the dive game opens on, so the
+    // first prompt never lands on a player who is still reading the HUD.
     this.later(() => {
       this.el.title.hidden = true
-      this.beginRound()
-    }, 900)
+      this.placePromptCard(this.questions[0])
+      const cd = this.el.countdown
+      cd.hidden = false
+      let n = 3
+      cd.querySelector('b').textContent = String(n)
+      const tick = () => {
+        n--
+        if (n <= 0) {
+          cd.hidden = true
+          this.openRound()
+          return
+        }
+        cd.querySelector('b').textContent = String(n)
+        sound('tick')
+        this.later(tick, 1000)
+      }
+      sound('tick')
+      this.later(tick, 1000)
+    }, 800)
   }
 
-  beginRound() {
-    const q = this.questions[this.round]
-    if (!q) return this.finish()
-
-    this.phase = 'asking'
-    this.renderPips()
-
+  placePromptCard(q, delayMs = 0) {
+    this.promptCard?.remove()
     const card = document.createElement('div')
     card.className = 'card'
-    card.style.top = (MAX_DAY_SCORE - this.score) * WORLD_PX - 150 + 'px'
+    card.style.top = this.yFor(this.score) - 150 + 'px'
+    if (delayMs) card.style.animationDelay = delayMs + 'ms'
     card.innerHTML =
       `<div class="rnd">PROMPT ${this.round + 1} OF ${ROUNDS_PER_DAY}</div>` +
       `<div class="prompt"></div>` +
@@ -223,126 +293,418 @@ export class Game {
     if (q.note) card.querySelector('.note').textContent = q.note
     this.el.world.appendChild(card)
     this.promptCard = card
+  }
 
-    this.el.answerbar.hidden = false
-    this.el.continuebar.hidden = true
-    this.el.answer.value = ''
-    this.el.answer.disabled = false
-    // Focusing on a phone throws up the keyboard and eats half the screen.
-    if (!matchMedia('(pointer: coarse)').matches) this.el.answer.focus()
-
+  // The round proper: input live, clock running.
+  openRound() {
+    this.phase = 'round'
+    this.renderPips()
+    const { el } = this
+    el.answerwrap.hidden = false
+    el.answerwrap.classList.remove('away')
+    el.answerbar.classList.remove('disabled')
+    el.continuebar.hidden = true
+    el.rejectHint.hidden = true
+    el.answer.value = ''
+    el.answer.disabled = false
+    el.btnSubmit.disabled = false
+    el.timerNum.textContent = String(SECONDS_PER_ROUND)
+    if (!matchMedia('(pointer: coarse)').matches) el.answer.focus()
     this.deadline = performance.now() + SECONDS_PER_ROUND * 1000
     this.lastTick = -1
     this.hiddenAt = 0
   }
 
   submit(raw) {
-    if (this.phase !== 'asking') return
-    this.phase = 'revealing'
-    this.el.answer.disabled = true
-    this.el.answerbar.hidden = true
-    document.documentElement.style.setProperty('--urgency', '0')
-    this.el.timer.classList.remove('hot')
-
+    if (this.phase !== 'round') return
+    const text = String(raw ?? '').trim()
+    if (!text) {
+      this.zapInput()
+      return
+    }
     const q = this.questions[this.round]
-    const result = scoreGuess(q, raw)
+    const result = scoreGuess(q, text)
+    if (!result.hit) return this.reject(text)
+    this.plunge(result)
+  }
+
+  // A guess that isn't on the board. The clock keeps running, the text stays
+  // in the box (selected, so the next keystroke replaces it), and the player
+  // goes again. The round only ends when something lands or time runs out.
+  reject(text) {
+    const { el } = this
+    this.zapInput()
+    el.answer.classList.remove('nope')
+    void el.answer.offsetWidth
+    el.answer.classList.add('nope')
+    sound('reject')
+    const r = el.answer.getBoundingClientRect()
+    this.fx.puff(r.left + rand(20, r.width - 20), r.top + rand(-4, 6))
+    this.fx.puff(r.left + rand(20, r.width - 20), r.top + rand(-8, 2))
+    el.rejectHint.innerHTML = `<b>“${escapeHtml(text)}”</b>: no lift. try again.`
+    el.rejectHint.hidden = false
+    el.answer.focus({ preventScroll: true })
+    el.answer.select()
+  }
+
+  zapInput() {
+    const a = this.el.answer
+    a.classList.remove('zap')
+    void a.offsetWidth
+    a.classList.add('zap')
+  }
+
+  // ---------- the flight ----------
+
+  plunge(result) {
+    const { el } = this
+    this.phase = 'plunge'
+    const tier = result.tier
     const from = this.score
-    this.score = Math.min(MAX_DAY_SCORE, this.score + result.points)
-    this.targetScore = this.score
-    this.results.push({ prompt: q.prompt, ...result })
+    const to = Math.min(MAX_DAY_SCORE, from + result.points)
+    const colour = `var(--tier-${tier.id})`
+    const shown = displayCase(result.text)
+
+    // submit fx: the input sparks and slides away; the round's card lifts off.
+    sound('submit')
+    this.zapInput()
+    const r = el.answer.getBoundingClientRect()
+    for (let i = 0; i < 12; i++) this.fx.spark(r.left + rand(0, r.width), r.top + rand(0, r.height), 2 + rand(0, 3))
+    document.documentElement.style.setProperty('--urgency', '0')
+    el.timer.classList.remove('danger')
+    el.answer.disabled = true
+    el.btnSubmit.disabled = true
+    el.rejectHint.hidden = true
+    el.answerbar.classList.add('disabled')
+    this.later(() => el.answerwrap.classList.add('away'), 350)
+    this.later(() => (el.answerwrap.hidden = true), 700)
 
     if (this.promptCard) {
       const card = this.promptCard
-      card.style.transition = 'opacity .45s linear, transform .45s var(--ease-out)'
-      card.style.opacity = '0'
-      card.style.transform = 'translate(-50%, -20px)'
-      this.later(() => card.remove(), 520)
+      const cr = card.getBoundingClientRect()
+      this.fx.burst(cr.left + cr.width / 2, cr.top + cr.height / 2, '77,227,255', 12, 0.6)
+      card.classList.add('gone')
+      this.later(() => card.remove(), 650)
       this.promptCard = null
     }
 
-    this.showLanding(result, from)
+    // The ladder: every tier's landing spot, measured from where you are.
+    // You get to watch your answer climb past the ones it beat.
+    this.clearLadder(true)
+    TIER_IDS.forEach((id, i) => {
+      const t = TIERS[id]
+      const line = document.createElement('div')
+      line.className = 'tierline'
+      line.style.top = this.yFor(from + t.score) + 'px'
+      line.style.setProperty('--tc', `var(--tier-${id})`)
+      line.style.opacity = '0'
+      line.innerHTML = `<div class="tag">${iconSvg(id, 17)}<span>${t.name.toUpperCase()} &middot; ${t.score}</span></div>`
+      el.world.appendChild(line)
+      // Force the layout flush synchronously so the opacity change below
+      // transitions from 0 rather than being coalesced away — and so it
+      // happens at all in a tab whose animation frames are throttled.
+      void line.offsetWidth
+      line.style.transitionDelay = i * 90 + 'ms'
+      line.style.opacity = '1'
+      this.ladder.push({ score: from + t.score, el: line, tier: id, passed: false })
+    })
+
+    // The answer itself takes off.
+    const tag = document.createElement('div')
+    tag.className = 'plunge-tag'
+    tag.style.setProperty('--tc', colour)
+    tag.style.top = this.yFor(from) + 'px'
+    tag.innerHTML = `“${escapeHtml(shown.toUpperCase())}”<b>▲</b>`
+    el.world.appendChild(tag)
+    sound('lift')
+
+    // The mascot's reaction is decided at take-off, like the krill's.
+    if (tier.id === 'dust') this.climber.react('sad', FLIGHT.dust.dur + 800)
+    else if (tier.id === 'tooclever') {
+      this.flash('rgba(255,159,67,.7)', 3, 130)
+      this.shake()
+      this.climber.react('faint', 2400)
+      this.swarm()
+    } else if (tier.id === 'astronomical') this.climber.react('boost', 900)
+
+    const spec = FLIGHT[tier.id]
+    let es = from
+    this.tween(
+      spec.dur,
+      spec.ease,
+      (t) => {
+        es = from + (to - from) * t
+        let ed, rot
+        if (tier.id === 'dust') {
+          ed = 36 * Math.sin(7 * t) * (1 - 0.25 * t)
+          rot = 0.55 * ed
+        } else if (tier.id === 'tooclever') {
+          ed = 7 * Math.sin(42 * t) + rand(-2, 2)
+          rot = rand(-3, 3)
+        } else if (tier.id === 'astronomical') {
+          ed = Math.sin(24 * t) * (1 - t) * 26
+          rot = 0.5 * ed
+        } else {
+          ed = Math.sin(16 * t) * (1 - t) * 14
+          rot = 0.4 * ed
+        }
+        tag.style.top = this.yFor(es) + 'px'
+        tag.style.transform = `translate3d(calc(-50% + ${ed.toFixed(1)}px), 0, 0) rotate(${rot.toFixed(1)}deg)`
+        this.targetScore = Math.min(MAX_DAY_SCORE + 8, es + LEAD)
+
+        const px = this.centreX() + ed
+        const py = this.screenY(es) + 14
+        if (tier.id === 'dust') {
+          if (Math.random() < 0.25) this.fx.puff(px + rand(-30, 30), py)
+        } else if (tier.id === 'rare') {
+          if (Math.random() < 0.09) this.fx.rings(px + rand(-20, 20), py - 10, 3)
+        } else if (tier.id === 'astronomical') {
+          if (Math.random() < 0.5) this.fx.spark(px + rand(-30, 30), py, 1.5 + rand(0, 2), '255,209,102')
+        } else if (tier.id === 'farout') {
+          this.spotlight(px, py, 66)
+          if (Math.random() < 0.3) this.fx.spark(px + rand(-20, 20), py, 1 + rand(0, 2), '191,167,255')
+        } else if (Math.random() < 0.6) {
+          this.fx.spark(px + rand(-34, 34), py + rand(-8, 4), 1.5 + rand(0, 2.5))
+        }
+
+        for (const line of this.ladder) {
+          if (!line.passed && es > line.score - 0.4) {
+            line.passed = true
+            line.el.classList.add('passed')
+            sound('tierline')
+            if (line.tier !== tier.id) {
+              this.fx.burst(this.centreX(), this.screenY(line.score), tierRgb(line.tier), 7, 0.5)
+            }
+          }
+        }
+      },
+      () => {
+        tag.remove()
+        this.land(result, from, to, shown)
+      }
+    )
   }
 
-  showLanding(result, fromScore) {
+  // The flock: for Too Clever, a stream of birds crosses the screen — the
+  // whole flock had the same idea.
+  swarm() {
+    const n = window.innerWidth < 700 ? 8 : 11
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement('div')
+      b.className = 'swarm' + (Math.random() < 0.5 ? ' flip' : '')
+      b.innerHTML = iconSvg('flocker', 34)
+      b.style.top = rand(22, 68) + '%'
+      b.style.animationDelay = i * 130 + rand(0, 90) + 'ms'
+      b.style.animationDuration = 1.7 + rand(0, 0.8) + 's'
+      this.el.stage.appendChild(b)
+      this.later(() => b.remove(), 3400)
+    }
+  }
+
+  land(result, from, to, shown) {
+    const { el } = this
     const tier = result.tier
-    const colour = tier ? `var(--tier-${tier.id})` : 'var(--tier-miss)'
-    const el = document.createElement('div')
-    el.className = 'landed' + (tier ? '' : ' miss')
-    // The panel is bottom-anchored in CSS; this is the gap between the
-    // player's head and the underside of the card.
-    el.style.top = (MAX_DAY_SCORE - this.score) * WORLD_PX - 30 + 'px'
-    el.style.setProperty('--tc', colour)
+    const colour = `var(--tier-${tier.id})`
+    this.score = to
+    this.targetScore = to
+    this.round++
+    this.results.push({ prompt: this.questions[this.round - 1].prompt, ...result, text: shown })
 
-    const alt = altitudeText(altitudeFor(this.score))
-    el.innerHTML =
-      `<div class="tname">${tier ? tier.name.toUpperCase() : 'NOTHING LIFTED'}</div>` +
-      `<div class="tans"></div>` +
-      `<div class="tpts"><b>+${result.points} PTS</b>${
-        result.points > 0 ? ` &middot; ${alt} up` : ''
-      }</div>` +
-      `<div class="tsub"></div>`
-    el.querySelector('.tans').textContent = result.text ? `“${result.text}”` : '—'
-    el.querySelector('.tsub').textContent = result.hit
-      ? result.quip
-      : 'never got off the ground.'
-    this.el.world.appendChild(el)
-    this.landedCard = el
+    for (const line of this.ladder) if (line.tier === tier.id) line.el.style.opacity = '0'
 
-    if (tier) {
-      playTier(tier.id)
-      this.flash(colour, tier.id === 'astronomical' ? 0.5 : 0.26)
-      if (tier.id === 'tooclever') {
+    const banner = this.banner({
+      tierId: tier.id,
+      name: tier.name.toUpperCase(),
+      answer: shown,
+      points: result.points,
+      sub: result.quip,
+      at: to,
+    })
+
+    // Where the camera will settle: the landing point maps to the anchor.
+    // Using the live camera here is wrong on the one frame it matters, when
+    // a throttled tab delivers the whole flight at once.
+    const lx = this.centreX()
+    const ly = cameraAnchor(to) * window.innerHeight
+    switch (tier.id) {
+      case 'dust':
+        this.fx.burst(lx, ly, '143,163,196', 8, 0.4)
+        sound('land_small')
+        this.countScore(from, to)
+        break
+      case 'tooclever':
+        this.flash('rgba(255,159,67,.6)', 2, 130)
         this.shake()
-        this.climber.setState('flail', 1600)
-      } else if (tier.id === 'astronomical') {
-        this.climber.setState('cheer', 2200)
+        this.fx.burst(lx, ly, tierRgb('tooclever'), 18, 0.7)
+        sound('land_small')
+        this.countScore(from, to)
+        break
+      case 'flocker':
+        this.fx.burst(lx, ly, tierRgb('flocker'), 22, 0.8)
+        sound('land_big')
+        this.countScore(from, to)
+        break
+      case 'rare':
+        this.fx.rings(lx, ly, 22)
+        this.fx.burst(lx, ly, tierRgb('rare'), 26, 0.9)
+        this.shake()
+        this.flash('rgba(255,82,82,.45)', 1, 240)
+        sound('land_big')
+        this.countScore(from, to)
+        break
+      case 'farout':
+        this.spotlight(lx, ly, 200)
+        this.el.spot.classList.add('on')
+        this.later(() => this.el.spot.classList.remove('on'), 2300)
+        this.fx.burst(lx, ly, tierRgb('farout'), 18, 0.7)
+        sound('land_big')
+        this.countScore(from, to)
+        break
+      case 'astronomical':
+        // The top: gold flash, a cheer, and the mascot perches on its own
+        // trophy while the score cranks up a notch at a time.
+        banner.classList.add('perched')
+        this.flash('rgba(255,209,102,.35)', 1, 220)
+        this.climber.react('celebrate', 1250)
         portal.happytime()
-      } else if (tier.score >= 60) {
-        this.climber.setState('boost', 900)
-      }
-    } else {
-      sfx.miss()
-      this.climber.setState('slump', 1200)
+        this.later(() => {
+          this.climber.setGold(true)
+          this.fx.gild(lx, ly)
+          sound('astronomical')
+          this.crankScore(from, to)
+          this.later(() => {
+            if (this.phase === 'landed') this.perch = banner.querySelector('.icon')
+          }, 900)
+        }, 1000)
+        break
     }
 
-    this.animateScore(fromScore + (this.score - fromScore) * 0, this.score)
-    this.el.continuebar.hidden = false
-    this.el.btnContinue.textContent =
-      this.round + 1 >= ROUNDS_PER_DAY ? 'SEE THE CLIMB ▲' : 'ASCEND ▲'
     this.phase = 'landed'
+    this.renderPips()
+    el.btnContinue.textContent = this.round >= ROUNDS_PER_DAY ? 'SEE THE CLIMB ▲' : 'ASCEND ▲'
+    el.continuebar.hidden = false
+  }
+
+  // Time ran out with nothing on the board.
+  timeout() {
+    const { el } = this
+    this.phase = 'plunge'
+    const typed = el.answer.value.trim()
+    el.answer.disabled = true
+    el.btnSubmit.disabled = true
+    el.rejectHint.hidden = true
+    el.answerbar.classList.add('disabled')
+    document.documentElement.style.setProperty('--urgency', '0')
+    el.timer.classList.remove('danger')
+    this.later(() => el.answerwrap.classList.add('away'), 200)
+    this.later(() => (el.answerwrap.hidden = true), 550)
+
+    if (this.promptCard) {
+      const card = this.promptCard
+      card.classList.add('gone')
+      this.later(() => card.remove(), 650)
+      this.promptCard = null
+    }
+
+    this.shake()
+    this.zapInput()
+    sound('miss')
+    this.flash('rgba(61,79,110,.5)', 1, 200)
+    this.climber.react('sad', 2600)
+
+    this.later(() => {
+      const at = this.score + 4
+      this.round++
+      this.results.push({
+        prompt: this.questions[this.round - 1].prompt, hit: false, tier: null, points: 0, quip: '', text: typed,
+      })
+      this.banner({ tierId: null, name: 'NOTHING LIFTED', answer: typed || '—', points: 0, sub: 'never left the pad.', at })
+      this.targetScore = this.score
+      this.phase = 'landed'
+      this.renderPips()
+      el.btnContinue.textContent = this.round >= ROUNDS_PER_DAY ? 'SEE THE CLIMB ▲' : 'ASCEND ▲'
+      el.continuebar.hidden = false
+    }, 900)
+  }
+
+  banner({ tierId, name, answer, points, sub, at }) {
+    const b = document.createElement('div')
+    b.className = 'landed' + (tierId ? '' : ' miss') + (at < 110 ? ' lowsky' : '')
+    b.style.top = this.yFor(at) - 30 + 'px'
+    b.style.setProperty('--tc', tierId ? `var(--tier-${tierId})` : 'var(--tier-miss)')
+    const alt = altitudeText(altitudeFor(this.score))
+    b.innerHTML =
+      (tierId ? `<div class="icon">${iconSvg(tierId, 66)}</div>` : '') +
+      `<div class="tname">${escapeHtml(name)}</div>` +
+      `<div class="tans"></div>` +
+      `<div class="tpts"><b>+${points} PTS</b>${points > 0 ? ` &middot; ${alt} up` : ''}</div>` +
+      `<div class="tsub"></div>`
+    b.querySelector('.tans').textContent = answer ? `“${answer}”` : '—'
+    b.querySelector('.tsub').textContent = sub
+    this.el.world.appendChild(b)
+    this.landedCard = b
+    return b
   }
 
   nextRound() {
     if (this.phase !== 'landed') return
-    sfx.ui()
+    sound('ui')
+    this.perch = null
     this.el.continuebar.hidden = true
+    if (this.round >= ROUNDS_PER_DAY) return this.finish()
+
+    // Rise to the next prompt: banner and ladder fade behind, the new card
+    // is waiting at your altitude, and the camera glides up to meet it.
+    this.phase = 'rise'
     if (this.landedCard) {
-      const card = this.landedCard
-      card.style.animation = 'none'
-      card.style.transition = 'opacity .5s linear'
-      card.style.opacity = '0'
-      this.later(() => card.remove(), 560)
+      const c = this.landedCard
+      c.style.animation = 'none'
+      c.style.transition = 'opacity .6s'
+      c.style.opacity = '0'
+      this.later(() => c.remove(), 650)
       this.landedCard = null
     }
-    this.round++
-    if (this.round >= ROUNDS_PER_DAY) return this.finish()
-    this.later(() => this.beginRound(), 260)
+    this.clearLadder(false)
+    this.climber.react(null)
+    this.placePromptCard(this.questions[this.round], 450)
+    this.el.answerwrap.hidden = false
+    this.el.answerwrap.classList.remove('away')
+    this.el.answerbar.classList.add('disabled')
+    this.el.answer.value = ''
+    this.el.timerNum.textContent = String(SECONDS_PER_ROUND)
+    const camFrom = this.camScore
+    const camTo = this.score
+    this.tween(2200, easeIO, (t) => {
+      this.targetScore = camFrom + (camTo - camFrom) * t
+    }, () => this.openRound())
+  }
+
+  clearLadder(immediate) {
+    for (const line of this.ladder) {
+      if (immediate) line.el.remove()
+      else {
+        line.el.style.transitionDelay = '0ms'
+        line.el.style.opacity = '0'
+        this.later(() => line.el.remove(), 600)
+      }
+    }
+    this.ladder = []
   }
 
   finish() {
     this.phase = 'done'
-    this.el.answerbar.hidden = true
+    this.el.answerwrap.hidden = true
     this.el.continuebar.hidden = true
     portal.gameplayStop()
-    sfx.finish()
+    sound('finish')
     this.later(() => this.renderSummary(), 700)
   }
 
-  // ---------- rendering ----------
+  // ---------- fx helpers ----------
 
-  animateScore(from, to) {
+  countScore(from, to) {
     const t0 = performance.now()
-    const dur = 900
+    const dur = 700
     const step = (now) => {
       const k = Math.min(1, (now - t0) / dur)
       const e = 1 - Math.pow(1 - k, 4)
@@ -350,24 +712,51 @@ export class Game {
       if (k < 1) requestAnimationFrame(step)
       else {
         this.el.scoreValue.textContent = String(to)
+        this.el.scoreValue.classList.remove('slam')
+        void this.el.scoreValue.offsetWidth
         this.el.scoreValue.classList.add('slam')
-        this.later(() => this.el.scoreValue.classList.remove('slam'), 520)
       }
     }
     requestAnimationFrame(step)
   }
 
-  flash(colour, strength) {
+  // Eight jolts, one every 110ms — the top tier's score arrives like a
+  // ratchet, not a slide.
+  crankScore(from, to) {
+    let n = 0
+    const id = setInterval(() => {
+      n++
+      const v = Math.round(from + (to - from) * (1 - Math.pow(1 - n / 8, 2)))
+      this.el.scoreValue.textContent = String(v)
+      this.el.scoreValue.classList.remove('crank')
+      void this.el.scoreValue.offsetWidth
+      this.el.scoreValue.classList.add('crank')
+      if (n >= 8) {
+        clearInterval(id)
+        this.el.scoreValue.textContent = String(to)
+        this.el.scoreValue.classList.add('slam')
+        this.later(() => this.el.scoreValue.classList.remove('slam'), 520)
+      }
+    }, 110)
+    this.timers.push(id)
+  }
+
+  flash(colour, times, ms) {
     const f = this.el.flash
-    f.style.transition = 'none'
-    f.style.background = colour
-    f.style.opacity = String(strength)
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        f.style.transition = 'opacity .5s ease-out'
-        f.style.opacity = '0'
-      })
-    )
+    let i = 0
+    const one = () => {
+      f.style.transition = 'none'
+      f.style.background = colour
+      f.style.opacity = '.42'
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          f.style.transition = 'opacity ' + ms + 'ms ease-out'
+          f.style.opacity = '0'
+        })
+      )
+      if (++i < times) this.later(one, 2.1 * ms)
+    }
+    one()
   }
 
   shake() {
@@ -377,59 +766,95 @@ export class Game {
     s.classList.add('shake')
   }
 
+  spotlight(x, y, r) {
+    this.el.spot.style.background =
+      `radial-gradient(circle at ${x}px ${y}px, transparent ${r}px, rgba(2,4,10,.72) ${r + 90}px, rgba(2,4,10,.96) ${r + 260}px)`
+  }
+
+  poke() {
+    sound('blub')
+    const r = this.el.climber.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    for (let i = 0; i < 6; i++) this.fx.spark(cx + rand(-16, 26), cy - 16, 1 + rand(0, 3))
+    this.fx.burst(cx, cy, this.climber.isGold() ? '255,209,102' : '255,93,143', 10, 0.5)
+  }
+
+  // ---------- per-frame ----------
+
   renderPips() {
     const bar = this.el.pipbar
     if (bar.children.length !== ROUNDS_PER_DAY) {
       bar.innerHTML = ''
       for (let i = 0; i < ROUNDS_PER_DAY; i++) bar.appendChild(document.createElement('span'))
     }
+    const live = this.phase === 'round' || this.phase === 'plunge' || this.phase === 'rise' || this.phase === 'intro'
     ;[...bar.children].forEach((sp, i) => {
-      sp.className = i < this.round ? 'done' : i === this.round && this.phase !== 'title' ? 'cur' : ''
+      sp.className = i < this.round ? 'done' : i === this.round && live ? 'cur' : ''
     })
     this.el.pipword.textContent =
-      this.phase === 'title'
-        ? 'LAUNCH PAD'
-        : this.round >= ROUNDS_PER_DAY
-          ? 'CLIMB COMPLETE'
+      this.phase === 'title' ? 'LAUNCH PAD'
+        : this.phase === 'done' || (this.round >= ROUNDS_PER_DAY && this.phase === 'landed') ? 'CLIMB COMPLETE'
           : landmarkFor(this.camScore).label
   }
 
   frame = (now) => {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000)
     this.lastFrame = now
+    this.time += dt
 
-    // Camera easing: a soft chase so the world glides rather than snapping.
-    const diff = this.targetScore - this.camScore
-    if (Math.abs(diff) > 0.02) this.camScore += diff * Math.min(1, dt * 2.6)
-    else this.camScore = this.targetScore
+    for (let i = this.tweens.length - 1; i >= 0; i--) {
+      const tw = this.tweens[i]
+      const k = (now - tw.t0) / tw.dur
+      if (k >= 1) {
+        tw.upd(tw.ease(1))
+        this.tweens.splice(i, 1)
+        tw.done?.()
+      } else tw.upd(tw.ease(Math.max(0, k)))
+    }
+
+    // Camera: a soft chase, plus the idle bob the whole world shares.
+    this.camScore += (this.targetScore - this.camScore) * (1 - Math.exp(-6 * dt))
+    const bob = this.phase === 'title' ? 0 : 2.6 * Math.sin(this.time * 0.45)
 
     const vh = window.innerHeight
     const anchor = cameraAnchor(this.camScore)
-    const offset = vh * anchor - (MAX_DAY_SCORE - this.camScore) * WORLD_PX
+    const offset = vh * anchor - this.yFor(this.camScore) + bob
+    const shift = offset - this.lastOffset
+    this.lastOffset = offset
     this.el.world.style.transform = `translate3d(0, ${offset.toFixed(1)}px, 0)`
-    this.el.climber.style.top = (anchor * 100).toFixed(2) + '%'
+
+    // The mascot is screen-fixed: beside the action, never flying with it.
+    this.el.climber.classList.toggle('perched', !!this.perch)
+    if (this.perch) {
+      const r = this.perch.getBoundingClientRect()
+      this.el.climber.style.left = r.left + r.width / 2 + 'px'
+      this.el.climber.style.top = r.top + r.height / 2 + 'px'
+    } else {
+      const onPad = this.round === 0 && this.phase !== 'plunge' && this.phase !== 'landed'
+      const side = onPad ? 0 : -44
+      this.el.climber.style.left = `calc(50% + ${side}px)`
+      this.el.climber.style.top = (anchor * 100).toFixed(2) + '%'
+    }
 
     this.sky.draw(this.camScore, dt)
+    this.fx.step(dt, Math.abs(shift) < 200 ? shift : 0)
     this.climber.setAltitude(this.camScore)
 
     const { value, unit } = formatAltitude(altitudeFor(this.camScore))
     this.el.altValue.textContent = value
     this.el.altUnit.textContent = unit
 
-    // The dark closes in as the air thins — a slow vignette tied to altitude.
     this.el.vignette.style.opacity = String(Math.min(0.85, Math.max(0, (this.camScore - 180) / 420)))
     this.el.vignette.style.background =
       'radial-gradient(ellipse at 50% 48%, transparent 34%, rgba(2,4,10,.55) 74%, rgba(2,4,10,.92) 100%)'
 
     for (const a of this.ambients) {
-      if (!a.classList.contains('passed') && this.camScore >= Number(a.dataset.score)) {
-        a.classList.add('passed')
-      }
+      if (!a.classList.contains('passed') && this.camScore >= Number(a.dataset.score)) a.classList.add('passed')
     }
 
-    if (this.phase === 'asking') this.tickClock(now)
+    if (this.phase === 'round') this.tickClock(now)
     if (this.phase !== 'title') this.renderPips()
-
     requestAnimationFrame(this.frame)
   }
 
@@ -439,14 +864,15 @@ export class Game {
     if (secs !== this.lastTick) {
       this.lastTick = secs
       this.el.timerNum.textContent = String(secs)
-      if (secs <= 5 && secs > 0) sfx.warn()
-      else if (secs <= 10 && secs > 5) sfx.tick()
+      if (secs <= 5 && secs > 0) sound('tick')
     }
     const urgency = left < 6000 ? 1 - left / 6000 : 0
     document.documentElement.style.setProperty('--urgency', urgency.toFixed(2))
-    this.el.timer.classList.toggle('hot', left < 5000)
-    if (left <= 0) this.submit(this.el.answer.value)
+    this.el.timer.classList.toggle('danger', urgency > 0.8)
+    if (left <= 0) this.timeout()
   }
+
+  // ---------- summary ----------
 
   renderSummary() {
     const total = this.score
@@ -456,21 +882,20 @@ export class Game {
     const rows = this.results
       .map((r, i) => {
         const colour = r.tier ? `var(--tier-${r.tier.id})` : 'var(--tier-miss)'
-        const name = r.tier ? r.tier.name : '—'
         return (
           `<div class="sum-row"><span class="n">${i + 1}</span>` +
+          `<span class="ic">${r.tier ? iconSvg(r.tier.id, 18) : ''}</span>` +
           `<span class="a${r.text ? '' : ' none'}">${escapeHtml(r.text || 'no answer')}</span>` +
-          `<span class="t" style="color:${colour}">${name}</span>` +
+          `<span class="t" style="color:${colour}">${r.tier ? r.tier.name : '—'}</span>` +
           `<span class="p">${r.points}</span></div>`
         )
       })
       .join('')
 
-    const reachedLabel = landmarkFor(total).label
     s.innerHTML =
       `<div class="sum-verdict" style="color:var(--tier-${band.tier})">${escapeHtml(band.verdict)}</div>` +
       `<div class="sum-final">${total}<small> / ${MAX_DAY_SCORE}</small></div>` +
-      `<div class="sum-alt">you reached ${altitudeText(alt)} — ${escapeHtml(reachedLabel)}</div>` +
+      `<div class="sum-alt">you reached ${altitudeText(alt)} — ${escapeHtml(landmarkFor(total).label)}</div>` +
       `<div class="sum-rows">${rows}</div>` +
       `<div class="sum-actions">
          <button id="sum-copy" type="button">COPY RESULT</button>
@@ -485,9 +910,7 @@ export class Game {
       const hrs = Math.floor(ms / 3_600_000)
       const mins = Math.floor((ms % 3_600_000) / 60_000)
       note.textContent = `next climb in ${hrs}h ${mins}m — or keep going in Endless.`
-    } else {
-      note.textContent = 'endless run. the daily is still waiting.'
-    }
+    } else note.textContent = 'endless run. the daily is still waiting.'
 
     $('sum-copy').addEventListener('click', () => this.copyResult(total, band))
     $('sum-again').addEventListener('click', () => {
@@ -497,9 +920,7 @@ export class Game {
   }
 
   copyResult(total, band) {
-    const glyphs = this.results
-      .map((r) => (r.tier ? TIERS[r.tier.id].emoji : '⬛'))
-      .join('')
+    const glyphs = this.results.map((r) => (r.tier ? TIERS[r.tier.id].emoji : '⬛')).join('')
     const label = this.mode === 'daily' ? `Climb #${dayNumber()}` : 'Endless Climb'
     const text =
       `The Daily Climb — ${label}\n${glyphs}\n` +
@@ -510,14 +931,14 @@ export class Game {
       setTimeout(() => (btn.textContent = 'COPY RESULT'), 1600)
     }
     navigator.clipboard?.writeText(text).then(() => done(true), () => done(false)) ?? done(false)
-    sfx.ui()
+    sound('ui')
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
-  )
+const TIER_RGB = {
+  dust: '143,163,196', tooclever: '255,159,67', flocker: '77,227,255',
+  rare: '255,82,82', farout: '157,123,255', astronomical: '255,209,102',
 }
-
-export { LADDER, TIERS }
+function tierRgb(id) {
+  return TIER_RGB[id] ?? '232,241,255'
+}

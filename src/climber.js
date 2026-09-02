@@ -1,7 +1,9 @@
-// The player's sprite. Two silhouettes for one journey: a balloon while
-// there's still air to float in, a rocket once there isn't. The swap happens
-// at the Karman line, which turns "you reached space" from a number on the
-// HUD into something you watch happen.
+// The mascot. Screen-fixed beside the action, the way the dive game's krill
+// is: it does not fly with your answer, it watches it go and reacts. Two
+// rigs for one journey — a balloon while there is air to float in, a rocket
+// once there isn't — cross-faded at the Karman line.
+import { iconSvg } from './icons.js'
+
 const NS = 'http://www.w3.org/2000/svg'
 
 const BALLOON = `
@@ -32,33 +34,77 @@ const ROCKET = `
   </g>
 </g>`
 
-export function mountClimber(el) {
+const BLUBS = ['whee!', 'hup!', 'up!', 'onward!']
+
+export function mountClimber(el, { onPoke } = {}) {
+  const mascot = document.createElement('div')
+  mascot.className = 'mascot'
   const svg = document.createElementNS(NS, 'svg')
   svg.setAttribute('viewBox', '0 0 26 34')
   svg.setAttribute('shape-rendering', 'crispEdges')
-  svg.setAttribute('width', '100%')
-  svg.setAttribute('height', '100%')
+  svg.setAttribute('class', 'sprite')
   svg.innerHTML = BALLOON + ROCKET
-  el.appendChild(svg)
+  const blub = document.createElement('span')
+  blub.className = 'blub'
+  blub.textContent = BLUBS[0]
+  mascot.appendChild(svg)
+  mascot.appendChild(blub)
+  el.appendChild(mascot)
 
   const balloon = svg.querySelector('.balloon')
   const rocket = svg.querySelector('.rocket')
+  let stateTimer = 0
+  let gold = false
 
-  return {
-    // Cross-fade the rigs across the Karman line rather than hard-cutting, so
-    // the change reads as a transformation instead of a glitch.
+  const api = {
+    el,
+    mascot,
+    isGold: () => gold,
+
     setAltitude(score) {
       const toRocket = score < 285 ? 0 : score > 315 ? 1 : (score - 285) / 30
       balloon.style.opacity = String(1 - toRocket)
       rocket.style.opacity = String(toRocket)
     },
-    setState(name, ms = 1400) {
-      el.classList.remove('cheer', 'flail', 'slump', 'boost')
-      void el.offsetWidth
+
+    // Reactions live on the sprite; the idle hover lives on the wrapper, so
+    // the two never fight over one transform.
+    react(name, ms = 0) {
+      svg.classList.remove('celebrate', 'faint', 'sad', 'roll', 'boost')
+      void svg.offsetWidth
+      clearTimeout(stateTimer)
       if (!name) return
-      el.classList.add(name)
-      clearTimeout(this._t)
-      this._t = setTimeout(() => el.classList.remove(name), ms)
+      svg.classList.add(name)
+      if (ms) stateTimer = setTimeout(() => svg.classList.remove(name), ms)
+    },
+
+    // Gold mode: earned by an Astronomical, kept for the rest of the run.
+    setGold(on, { quiet = false } = {}) {
+      gold = !!on
+      mascot.classList.toggle('gold', gold)
+      if (gold && !quiet) {
+        mascot.classList.remove('gilding')
+        void mascot.offsetWidth
+        mascot.classList.add('gilding')
+        setTimeout(() => mascot.classList.remove('gilding'), 1200)
+      }
+    },
+
+    blub() {
+      blub.textContent = BLUBS[(Math.random() * BLUBS.length) | 0]
+      blub.classList.remove('show')
+      void blub.offsetWidth
+      blub.classList.add('show')
     },
   }
+
+  mascot.addEventListener('click', () => {
+    api.blub()
+    api.react('roll', 950)
+    onPoke?.()
+  })
+
+  return api
 }
+
+export { iconSvg }
