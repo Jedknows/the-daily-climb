@@ -62,7 +62,7 @@ export function mountClimber(el, { onPoke } = {}) {
     isGold: () => gold,
 
     setAltitude(score) {
-      const toRocket = score < 285 ? 0 : score > 315 ? 1 : (score - 285) / 30
+      const toRocket = score < 135 ? 0 : score > 165 ? 1 : (score - 135) / 30
       balloon.style.opacity = String(1 - toRocket)
       rocket.style.opacity = String(toRocket)
     },

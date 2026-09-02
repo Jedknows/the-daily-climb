@@ -49,12 +49,19 @@ than fitting a curve means every iconic number lands on a clean score:
 
 | score | altitude | landmark |
 | --- | --- | --- |
-| 100 | 12 km | the tropopause |
-| 200 | 50 km | the stratopause |
-| 300 | 100 km | **the Kármán line — space** |
-| 500 | 384,400 km | the Moon |
-| 600 | 154 AU | Voyager 1, past the heliopause |
+| 62 | 12 km | the tropopause |
+| 105 | 50 km | the stratopause |
+| 150 | 100 km | **the Kármán line — space** |
+| 200 | 408 km | the Space Station |
+| 350 | 384,400 km | the Moon |
+| 485 | 154 AU | Voyager 1, past the heliopause |
 | 700 | 26,002 ly | **the galactic core** |
+
+The ladder is deliberately compressed relative to real altitude (space would
+otherwise be 300 and the Moon 500), so that a typical 150–250 run actually
+gets to see the stars come out, and the tier bands line up with the zones:
+Dust never leaves the air, Flocker makes orbit, Rare reaches for the Moon,
+Far Out is out among the planets, Astronomical is interstellar.
 
 ## Editing the questions
 

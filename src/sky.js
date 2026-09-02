@@ -15,19 +15,22 @@ import { MAX_DAY_SCORE, cameraAnchor } from './rules.js'
 
 const PX = 3 // buffer downscale — the size of one "pixel"
 
-// Sky keyframes: [score, horizonColour, zenithColour]. Interpolated in RGB.
+// Sky keyframes: [score, horizonColour, zenithColour], interpolated in RGB.
+// Dense across 0-150 on purpose: that is the range most runs live in, and a
+// ten-point answer has to visibly change the light.
 const SKY = [
   [0, [184, 216, 240], [110, 168, 220]],
-  [60, [156, 196, 232], [74, 134, 196]],
-  [100, [127, 176, 220], [47, 101, 168]],
-  [160, [90, 143, 196], [28, 64, 118]],
-  [200, [61, 106, 158], [16, 42, 82]],
-  [260, [36, 70, 110], [7, 22, 51]],
-  [300, [20, 44, 76], [3, 9, 26]],
-  [400, [10, 23, 48], [2, 5, 15]],
-  [500, [6, 13, 30], [1, 3, 10]],
-  [600, [5, 9, 26], [1, 2, 8]],
-  [660, [16, 8, 38], [6, 2, 26]],
+  [25, [166, 204, 236], [80, 140, 205]],
+  [55, [140, 186, 228], [50, 105, 175]],
+  [85, [100, 150, 205], [28, 66, 125]],
+  [110, [62, 105, 160], [14, 36, 78]],
+  [130, [34, 64, 105], [6, 18, 44]],
+  [150, [18, 38, 66], [3, 8, 24]],
+  [250, [9, 20, 42], [2, 4, 14]],
+  [350, [6, 12, 28], [1, 3, 10]],
+  [450, [5, 9, 24], [1, 2, 8]],
+  [560, [12, 7, 32], [5, 2, 22]],
+  [640, [28, 12, 52], [10, 4, 32]],
   [700, [48, 18, 70], [16, 6, 40]],
 ]
 
@@ -107,8 +110,8 @@ export class Sky {
     }
 
     // Cloud deck. Real cumulus sit in a band, not sprinkled evenly up the
-    // sky, so these are authored across scores 18-104 — you punch up through
-    // the deck rather than swimming in it the whole way.
+    // sky, so these are authored across scores 12-62 — you punch up through
+    // the deck inside the first round or two rather than swimming in it.
     this.clouds = []
     for (let i = 0; i < 16; i++) {
       const far = rand() < 0.45
@@ -124,7 +127,7 @@ export class Sky {
         })
       }
       this.clouds.push({
-        score: 18 + (i / 16) * 86 + rand() * 6,
+        score: 12 + (i / 16) * 48 + rand() * 4,
         x: rand(),
         scale: (far ? 0.42 : 0.72) + rand() * 0.4,
         layer: far ? 0.42 : 0.8,
@@ -136,10 +139,10 @@ export class Sky {
     // Distant bodies, each pinned to the altitude where it becomes the thing
     // you are looking at.
     this.bodies = [
-      { score: 500, x: 0.74, r: 26, kind: 'moon', span: 130 },
-      { score: 566, x: 0.26, r: 15, kind: 'planet', col: [214, 168, 122], ring: false, span: 90 },
-      { score: 583, x: 0.72, r: 19, kind: 'planet', col: [226, 200, 150], ring: true, span: 90 },
-      { score: 600, x: 0.34, r: 11, kind: 'planet', col: [110, 160, 220], ring: false, span: 90 },
+      { score: 350, x: 0.74, r: 26, kind: 'moon', span: 90 },
+      { score: 440, x: 0.26, r: 15, kind: 'planet', col: [214, 168, 122], ring: false, span: 60 },
+      { score: 452, x: 0.72, r: 19, kind: 'planet', col: [226, 200, 150], ring: true, span: 60 },
+      { score: 466, x: 0.34, r: 11, kind: 'planet', col: [110, 160, 220], ring: false, span: 60 },
     ]
   }
 
@@ -183,7 +186,7 @@ export class Sky {
 
   // The Milky Way band, then the core itself — the last thing you see.
   drawGalaxy(s) {
-    const a = band(s, 560, 665)
+    const a = band(s, 440, 570)
     if (a <= 0) return
     const { ctx, bw, bh } = this
     ctx.save()
@@ -204,7 +207,7 @@ export class Sky {
     ctx.fill()
     ctx.restore()
 
-    const core = band(s, 655, 700)
+    const core = band(s, 640, 700)
     if (core > 0) {
       const cx = bw * 0.5
       const cy = bh * (0.42 - core * 0.06)
@@ -220,9 +223,9 @@ export class Sky {
   }
 
   drawStars(s) {
-    // Stars are scattered by daylight low down and only emerge as the air
-    // thins — the fade tracks the real thing closely enough to feel right.
-    const a = band(s, 95, 300)
+    // Stars are scattered by daylight low down and emerge as the air thins:
+    // the first ones by the stratosphere, the full field at the Karman line.
+    const a = band(s, 60, 150)
     if (a <= 0) return
     const { ctx, bw, bh } = this
     for (const st of this.stars) {
@@ -288,14 +291,14 @@ export class Sky {
   }
 
   drawAurora(s) {
-    const a = band(s, 300, 360) * (1 - band(s, 430, 500))
+    const a = band(s, 150, 200) * (1 - band(s, 255, 320))
     if (a <= 0.01) return
     const { ctx, bw, bh } = this
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
     for (let r = 0; r < 3; r++) {
       const phase = this.time * (0.22 + r * 0.07) + r * 2.1
-      const baseY = bh * (0.5 + r * 0.09) + (s - 330) * 1.1
+      const baseY = bh * (0.5 + r * 0.09) + (s - 205) * 1.1
       if (baseY < -60 || baseY > bh + 90) continue
       ctx.globalAlpha = a * (0.3 - r * 0.07)
       const grad = ctx.createLinearGradient(0, baseY - 46, 0, baseY + 16)
@@ -324,7 +327,7 @@ export class Sky {
     const y = bh * 0.19 + s * this.wpx * 0.1
     if (y > bh + 80) return
     const x = bw * 0.82
-    const hard = band(s, 200, 320)
+    const hard = band(s, 95, 160)
     const r = 15 - hard * 5
 
     ctx.save()
@@ -363,7 +366,7 @@ export class Sky {
   // leaving. The handover happens across the stratosphere.
   drawGround(s) {
     const { ctx, bw, bh } = this
-    const curve = band(s, 120, 300)
+    const curve = band(s, 70, 150)
     // Anchored so the pad sits under the climber's feet at score 0 (the DOM
     // places the player at 55% of the viewport) and recedes at full parallax.
     const groundY = bh * cameraAnchor(s) + 7 + s * this.wpx
@@ -409,33 +412,64 @@ export class Sky {
     }
 
     if (curve > 0) {
-      // The limb: a huge circle whose visible cap shrinks as you climb.
-      const shrink = band(s, 260, 560)
+      // The limb: a huge circle whose cap sits along the bottom of the frame
+      // as you break into space, then shrinks and sinks away as you head
+      // for the Moon. Its top edge is placed directly (a fraction of the
+      // viewport) — deriving it from the radius is how it ended up below the
+      // screen at every altitude and never showed at all.
+      const shrink = band(s, 130, 330)
       const R = bw * (5.5 - shrink * 4.6)
-      const cy = bh * (1.02 + shrink * 0.1) + R - (1 - shrink) * 22 + s * 0.16
-      const alpha = curve * (1 - band(s, 540, 620))
-      if (alpha > 0.01 && cy - R < bh) {
+      const top = bh * (0.68 + shrink * 0.36)
+      const cx = bw / 2
+      const cy = top + R
+      const alpha = curve * (1 - band(s, 300, 380))
+      if (alpha > 0.01 && top < bh) {
         ctx.save()
         ctx.globalAlpha = alpha
         // Atmosphere halo, drawn first so the planet edge sits on top of it.
         ctx.save()
         ctx.globalCompositeOperation = 'lighter'
-        const hg = ctx.createRadialGradient(bw / 2, cy, R * 0.985, bw / 2, cy, R * 1.06)
-        hg.addColorStop(0, 'rgba(80,170,255,0)')
-        hg.addColorStop(0.45, 'rgba(90,180,255,.5)')
+        const halo = Math.max(14, Math.min(60, R * 0.03))
+        const hg = ctx.createRadialGradient(cx, cy, R - 1, cx, cy, R + halo)
+        hg.addColorStop(0, 'rgba(120,200,255,.55)')
+        hg.addColorStop(0.35, 'rgba(90,180,255,.28)')
         hg.addColorStop(1, 'rgba(60,140,255,0)')
         ctx.fillStyle = hg
         ctx.fillRect(0, 0, bw, bh)
         ctx.restore()
 
-        ctx.fillStyle = '#123055'
-        this.disc(bw / 2, cy, R)
+        // Ocean, with a brighter rim so the edge reads against black.
+        ctx.fillStyle = '#4aa3e0'
+        this.disc(cx, cy, R)
+        ctx.fillStyle = '#17427a'
+        this.disc(cx, cy, R - 2)
+
+        // Continents and cloud streaks: sized to the SCREEN, not the planet
+        // (the radius is huge on purpose so the edge bows only slightly),
+        // placed against the local edge and clipped inside the disc so they
+        // can never poke above the horizon.
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(cx, cy, R - 2, 0, Math.PI * 2)
+        ctx.clip()
+        const edgeY = (x) => cy - Math.sqrt(Math.max(0, R * R - (x - cx) * (x - cx)))
+        const land = [
+          [0.12, 46, 9, 5], [0.31, 70, 12, 7], [0.5, 38, 8, 9], [0.66, 84, 13, 6], [0.87, 52, 10, 8],
+        ]
         ctx.fillStyle = '#1d5c37'
-        // A couple of landmasses so the limb reads as Earth, not a blue ball.
-        this.disc(bw * 0.34, cy - R * 0.985, R * 0.1)
-        this.disc(bw * 0.62, cy - R * 0.97, R * 0.07)
-        ctx.fillStyle = 'rgba(255,255,255,.32)'
-        this.disc(bw * 0.48, cy - R * 0.99, R * 0.06)
+        for (const [fx, w, h, dy] of land) {
+          const x = fx * bw
+          const y = edgeY(x) + dy + h / 2
+          ctx.beginPath()
+          ctx.ellipse(x, y, w / 2, h / 2, 0, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.fillStyle = 'rgba(255,255,255,.34)'
+        for (const [fx, w] of [[0.2, 30], [0.42, 22], [0.58, 34], [0.78, 26], [0.95, 18]]) {
+          const x = fx * bw
+          ctx.fillRect(Math.round(x - w / 2), Math.round(edgeY(x) + 3), w, 2)
+        }
+        ctx.restore()
         ctx.restore()
       }
     }
@@ -443,7 +477,7 @@ export class Sky {
 
   drawClouds(s) {
     const { ctx, bw, bh } = this
-    const fade = 1 - band(s, 100, 155)
+    const fade = 1 - band(s, 50, 92)
     if (fade <= 0) return
     for (const c of this.clouds) {
       const sy = bh * cameraAnchor(s) + (s - c.score) * this.wpx * c.layer

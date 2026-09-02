@@ -13,16 +13,20 @@ import { store } from './portal.js'
 export const BUCKET = 25
 export const BUCKETS = MAX_DAY_SCORE / BUCKET + 1 // 0..700 inclusive -> 29
 
-// How a crowd splits on one prompt, before seeing the board. Most people
-// blurt the obvious answer; a meaningful slice reaches for the "clever"
-// one; genuinely rare picks are rare; the gem is nearly nobody.
-const PRIOR = { miss: 0.05, dust: 0.34, tooclever: 0.13, flocker: 0.25, rare: 0.15, farout: 0.065, astronomical: 0.015 }
+// How a crowd splits on one prompt, before seeing the board. Modelled as a
+// mixture of three kinds of player rather than one average one: rounds are
+// not independent draws — a sharp player is sharp on all seven — and a
+// single prior makes the crowd far tighter than any real crowd is.
+const PRIORS = [
+  { w: 0.55, p: { miss: 0.07, dust: 0.50, tooclever: 0.14, flocker: 0.21, rare: 0.06, farout: 0.018, astronomical: 0.002 } }, // casual
+  { w: 0.33, p: { miss: 0.04, dust: 0.30, tooclever: 0.13, flocker: 0.29, rare: 0.17, farout: 0.06, astronomical: 0.01 } }, // regular
+  { w: 0.12, p: { miss: 0.015, dust: 0.12, tooclever: 0.10, flocker: 0.25, rare: 0.30, farout: 0.17, astronomical: 0.045 } }, // sharp
+]
 
-// Nudge the prior by how the prompt's board is shaped: a board with many
-// obvious answers spreads the crowd across them (still Dust), while a board
-// whose middle is thick gives the middle tiers more weight.
-function priorFor(question) {
-  const p = { ...PRIOR }
+// Nudge a prior by how the prompt's board is shaped: a board whose middle is
+// thick gives the middle tiers more weight, a top-heavy board the obvious.
+function priorFor(base, question) {
+  const p = { ...base }
   if (question?.keys) {
     const counts = [0, 0, 0, 0, 0, 0]
     for (const [tierIdx] of Object.values(question.keys)) counts[tierIdx]++
@@ -38,13 +42,11 @@ function priorFor(question) {
   return p
 }
 
-export function distributionFor(questions) {
-  // Start with certainty of 0 points, then fold in each round.
+function convolve(base, rounds) {
   let dist = new Float64Array(MAX_DAY_SCORE + 1)
   dist[0] = 1
-  const rounds = questions?.length ? questions : Array.from({ length: ROUNDS_PER_DAY })
   for (const q of rounds) {
-    const p = priorFor(q)
+    const p = priorFor(base, q)
     const next = new Float64Array(MAX_DAY_SCORE + 1)
     for (let s = 0; s <= MAX_DAY_SCORE; s++) {
       const m = dist[s]
@@ -57,10 +59,20 @@ export function distributionFor(questions) {
     }
     dist = next
   }
+  return dist
+}
+
+export function distributionFor(questions) {
+  const rounds = questions?.length ? questions : Array.from({ length: ROUNDS_PER_DAY })
+  const fine = new Float64Array(MAX_DAY_SCORE + 1)
+  for (const { w, p } of PRIORS) {
+    const d = convolve(p, rounds)
+    for (let s = 0; s <= MAX_DAY_SCORE; s++) fine[s] += w * d[s]
+  }
   // Bucket for the chart; keep the fine array for percentiles.
   const buckets = new Array(BUCKETS).fill(0)
-  for (let s = 0; s <= MAX_DAY_SCORE; s++) buckets[Math.round(s / BUCKET)] += dist[s]
-  return { fine: dist, buckets, label: "today's climbers", modeled: true }
+  for (let s = 0; s <= MAX_DAY_SCORE; s++) buckets[Math.round(s / BUCKET)] += fine[s]
+  return { fine, buckets, label: "today's climbers", modeled: true }
 }
 
 // Share of the population strictly below `score`, as a whole percentage.

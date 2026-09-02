@@ -12,7 +12,7 @@ import { iconSvg } from './icons.js'
 import { event as sound, unlock, isMuted, toggleMuted, onMuteChange } from './audio.js'
 import * as portal from './portal.js'
 
-const WORLD_PX = 12 // screen pixels per point of score
+const WORLD_PX = 16 // screen pixels per point of score — every answer should visibly move the world
 const LEAD = 5 // points the camera runs ahead of the answer in flight
 const $ = (id) => document.getElementById(id)
 const rand = (a, b) => a + Math.random() * (b - a)
@@ -32,34 +32,34 @@ const FLIGHT = {
 }
 
 const AMBIENT = [
-  [8, 'L', 'the pad falls away'],
-  [30, 'R', 'birds cruise about here'],
-  [50, 'L', 'the clouds start'],
-  [72, 'R', 'Everest — 8,849m'],
-  [86, 'L', 'the airliners level off'],
-  [100, 'R', 'THE TROPOPAUSE', 1],
-  [118, 'L', 'weather stops. it is all clear above.'],
-  [130, 'R', 'the Armstrong limit — blood boils here'],
-  [160, 'L', 'the ozone layer'],
-  [180, 'R', 'Baumgartner jumped from here'],
-  [200, 'L', 'THE STRATOPAUSE', 1],
-  [230, 'R', 'meteors burn up around you'],
-  [260, 'L', 'noctilucent clouds — the highest clouds there are'],
-  [285, 'R', 'the mesopause. the coldest place on Earth.'],
-  [300, 'L', 'THE KÁRMÁN LINE — SPACE', 1],
-  [318, 'R', 'no air. no sound. no weather.'],
-  [360, 'L', 'the Space Station passes'],
-  [400, 'R', 'THE AURORA CEILING', 1],
-  [430, 'L', 'the Van Allen belts'],
-  [465, 'R', 'geostationary — satellites hang still up here'],
-  [500, 'L', 'THE MOON', 1],
-  [530, 'R', 'Webb, watching from L2'],
-  [560, 'L', 'you pass the Sun'],
-  [580, 'R', 'Neptune. the last planet.'],
-  [600, 'L', 'VOYAGER 1 — INTERSTELLAR SPACE', 1],
-  [630, 'R', 'Proxima Centauri, the next star over'],
-  [655, 'L', 'Betelgeuse'],
-  [680, 'R', 'the Pillars of Creation'],
+  [6, 'L', 'the pad falls away'],
+  [20, 'R', 'birds cruise about here'],
+  [30, 'L', 'the clouds start'],
+  [48, 'R', 'Everest — 8,849m'],
+  [55, 'L', 'the airliners level off'],
+  [62, 'R', 'THE TROPOPAUSE', 1],
+  [70, 'L', 'weather stops. it is all clear above.'],
+  [75, 'R', 'the Armstrong limit — blood boils here'],
+  [88, 'L', 'the ozone layer'],
+  [96, 'R', 'Baumgartner jumped from here'],
+  [105, 'L', 'THE STRATOPAUSE', 1],
+  [118, 'R', 'meteors burn up around you'],
+  [130, 'L', 'noctilucent clouds — the highest clouds there are'],
+  [140, 'R', 'the mesopause. the coldest place on Earth.'],
+  [150, 'L', 'THE KÁRMÁN LINE — SPACE', 1],
+  [162, 'R', 'no air. no sound. no weather.'],
+  [200, 'L', 'the Space Station passes'],
+  [250, 'R', 'THE AURORA CEILING', 1],
+  [275, 'L', 'the Van Allen belts'],
+  [310, 'R', 'geostationary — satellites hang still up here'],
+  [350, 'L', 'THE MOON', 1],
+  [390, 'R', 'Webb, watching from L2'],
+  [425, 'L', 'you pass the Sun'],
+  [455, 'R', 'Neptune. the last planet.'],
+  [485, 'L', 'VOYAGER 1 — INTERSTELLAR SPACE', 1],
+  [545, 'R', 'Proxima Centauri, the next star over'],
+  [610, 'L', 'Betelgeuse'],
+  [665, 'R', 'the Pillars of Creation'],
   [700, 'L', 'THE GALACTIC CORE — a perfect climb ends here', 1],
 ]
 
@@ -144,6 +144,7 @@ export class Game {
       d.style.top = this.yFor(score) + 'px'
       d.innerHTML = side === 'L' ? '<span class="dash">──</span> ' + text : text + ' <span class="dash">──</span>'
       d.dataset.score = String(score)
+      if (major) d.dataset.major = '1'
       frag.appendChild(d)
     }
     this.el.world.appendChild(frag)
@@ -650,7 +651,7 @@ export class Game {
 
   banner({ tierId, name, answer, points, sub, at }) {
     const b = document.createElement('div')
-    b.className = 'landed' + (tierId ? '' : ' miss') + (at < 110 ? ' lowsky' : '')
+    b.className = 'landed' + (tierId ? '' : ' miss') + (at < 100 ? ' lowsky' : '')
     b.style.top = this.yFor(at) - 30 + 'px'
     b.style.setProperty('--tc', tierId ? `var(--tier-${tierId})` : 'var(--tier-miss)')
     const alt = altitudeText(altitudeFor(this.score))
@@ -876,12 +877,20 @@ export class Game {
     this.el.altValue.textContent = value
     this.el.altUnit.textContent = unit
 
-    this.el.vignette.style.opacity = String(Math.min(0.85, Math.max(0, (this.camScore - 180) / 420)))
+    this.el.vignette.style.opacity = String(Math.min(0.85, Math.max(0, (this.camScore - 90) / 300)))
     this.el.vignette.style.background =
       'radial-gradient(ellipse at 50% 48%, transparent 34%, rgba(2,4,10,.55) 74%, rgba(2,4,10,.92) 100%)'
 
     for (const a of this.ambients) {
-      if (!a.classList.contains('passed') && this.camScore >= Number(a.dataset.score)) a.classList.add('passed')
+      if (!a.classList.contains('passed') && this.camScore >= Number(a.dataset.score)) {
+        a.classList.add('passed')
+        // Crossing a named zone is a beat of its own: a chime and a wash of
+        // light, so the sky changing is something you hear as well as see.
+        if (a.dataset.major && this.phase !== 'title' && this.phase !== 'intro') {
+          sound('zone')
+          this.flash('rgba(232,241,255,.55)', 1, 260)
+        }
+      }
     }
 
     if (this.phase === 'round') this.tickClock(dt)

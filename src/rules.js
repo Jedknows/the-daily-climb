@@ -68,12 +68,15 @@ export const TIER_IDS = Object.keys(TIERS)
 export const MISS_TIER = { id: null, name: 'Nothing Lifted', score: 0 }
 
 // --- end-of-run verdict ----------------------------------------------------
+// The bands line up with the sky: space begins where Dust ends, the Moon is
+// where Rare ends, and Astronomical is interstellar.
 export const SCORE_BANDS = [
-  { min: 0, tier: 'dust', range: '0–150', verdict: 'Dust. Barely cleared the launch pad.' },
-  { min: 151, tier: 'flocker', range: '151–250', verdict: 'Flocker. Cruising with the flock.' },
-  { min: 251, tier: 'rare', range: '251–350', verdict: 'Rare. Above the weather. Nice.' },
-  { min: 351, tier: 'farout', range: '351–449', verdict: 'Far out. Genuinely high orbit.' },
-  { min: 450, tier: 'astronomical', range: '450+', verdict: 'Astronomical. You touched the core. Absurd.' },
+  { min: 0, tier: 'dust', range: '0–150', verdict: 'Dust. Never quite got out of the air.' },
+  { min: 151, tier: 'flocker', range: '151–250', verdict: 'Flocker. Orbit, with the flock.' },
+  { min: 251, tier: 'rare', range: '251–350', verdict: 'Rare. High orbit, Moon in reach. Nice.' },
+  { min: 351, tier: 'farout', range: '351–449', verdict: 'Far out. Past the Moon, out among the planets.' },
+  { min: 450, tier: 'astronomical', range: '450+', verdict: 'Astronomical. Interstellar. Absurd.' },
+  { min: 700, tier: 'astronomical', range: '700', verdict: 'Perfect. The galactic core. Nobody does that.' },
 ]
 
 export function bandFor(score) {
@@ -88,48 +91,51 @@ export function bandFor(score) {
 // exponentially between rungs.
 //
 // The payoff of authoring it rather than fitting a curve: every iconic
-// number lands on a clean score. The Karman line is exactly 300. The Moon is
-// exactly 500. A perfect 700 is the galactic core.
+// number lands on a clean score, and the drama front-loads. Space is 150 —
+// the top of the Dust band, so Dust never leaves the air. The Moon is 350,
+// the top of Rare. A perfect 700 is the galactic core. Real altitude would
+// put space at 300 and the Moon at 500, and most runs would never see a
+// star; the ladder is compressed on purpose so every answer moves the sky.
 //
 // `m` is metres. Yes, the last few rungs are absurd numbers of metres —
 // formatAltitude() switches units long before anyone has to read them.
 export const LADDER = [
   { score: 0, m: 0, label: 'the launch pad' },
-  { score: 12, m: 330, label: 'the Eiffel Tower' },
-  { score: 24, m: 828, label: 'the Burj Khalifa' },
-  { score: 38, m: 2_000, label: 'the base of the clouds' },
-  { score: 55, m: 5_895, label: 'the summit of Kilimanjaro' },
-  { score: 72, m: 8_849, label: 'the summit of Everest' },
-  { score: 86, m: 10_600, label: 'airliner cruising altitude' },
-  { score: 100, m: 12_000, label: 'the tropopause' },
+  { score: 8, m: 330, label: 'the Eiffel Tower' },
+  { score: 16, m: 828, label: 'the Burj Khalifa' },
+  { score: 26, m: 2_000, label: 'the base of the clouds' },
+  { score: 38, m: 5_895, label: 'the summit of Kilimanjaro' },
+  { score: 48, m: 8_849, label: 'the summit of Everest' },
+  { score: 55, m: 10_600, label: 'airliner cruising altitude' },
+  { score: 62, m: 12_000, label: 'the tropopause' },
 
-  { score: 130, m: 18_000, label: 'the Armstrong limit' },
-  { score: 160, m: 30_000, label: 'the ozone layer' },
-  { score: 180, m: 38_969, label: "Baumgartner's jump" },
-  { score: 200, m: 50_000, label: 'the stratopause' },
+  { score: 75, m: 18_000, label: 'the Armstrong limit' },
+  { score: 88, m: 30_000, label: 'the ozone layer' },
+  { score: 96, m: 38_969, label: "Baumgartner's jump" },
+  { score: 105, m: 50_000, label: 'the stratopause' },
 
-  { score: 230, m: 60_000, label: 'where meteors burn up' },
-  { score: 260, m: 76_000, label: 'noctilucent clouds' },
-  { score: 285, m: 85_000, label: 'the mesopause' },
-  { score: 300, m: 100_000, label: 'the Kármán line — space' },
+  { score: 118, m: 60_000, label: 'where meteors burn up' },
+  { score: 130, m: 76_000, label: 'noctilucent clouds' },
+  { score: 140, m: 85_000, label: 'the mesopause' },
+  { score: 150, m: 100_000, label: 'the Kármán line — space' },
 
-  { score: 330, m: 160_000, label: 'the lowest stable orbit' },
-  { score: 360, m: 408_000, label: 'the Space Station' },
-  { score: 380, m: 550_000, label: 'the Starlink shell' },
-  { score: 400, m: 1_000_000, label: 'the top of the aurora' },
+  { score: 175, m: 160_000, label: 'the lowest stable orbit' },
+  { score: 200, m: 408_000, label: 'the Space Station' },
+  { score: 225, m: 550_000, label: 'the Starlink shell' },
+  { score: 250, m: 1_000_000, label: 'the top of the aurora' },
 
-  { score: 430, m: 2_000_000, label: 'the Van Allen belts' },
-  { score: 465, m: 35_786_000, label: 'geostationary orbit' },
-  { score: 500, m: 384_400_000, label: 'the Moon' },
+  { score: 275, m: 2_000_000, label: 'the Van Allen belts' },
+  { score: 310, m: 35_786_000, label: 'geostationary orbit' },
+  { score: 350, m: 384_400_000, label: 'the Moon' },
 
-  { score: 530, m: 1_500_000_000, label: 'the Webb telescope at L2' },
-  { score: 560, m: 149_600_000_000, label: 'the Sun' },
-  { score: 580, m: 4_500_000_000_000, label: 'Neptune' },
-  { score: 600, m: 23_000_000_000_000, label: 'Voyager 1, past the heliopause' },
+  { score: 390, m: 1_500_000_000, label: 'the Webb telescope at L2' },
+  { score: 425, m: 149_600_000_000, label: 'the Sun' },
+  { score: 455, m: 4_500_000_000_000, label: 'Neptune' },
+  { score: 485, m: 23_000_000_000_000, label: 'Voyager 1, past the heliopause' },
 
-  { score: 630, m: 4.0114e16, label: 'Proxima Centauri' },
-  { score: 655, m: 6.06e18, label: 'Betelgeuse' },
-  { score: 680, m: 7.09e19, label: 'the Pillars of Creation' },
+  { score: 545, m: 4.0114e16, label: 'Proxima Centauri' },
+  { score: 610, m: 6.06e18, label: 'Betelgeuse' },
+  { score: 665, m: 7.09e19, label: 'the Pillars of Creation' },
   { score: 700, m: 2.46e20, label: 'the galactic core' },
 ]
 

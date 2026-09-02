@@ -130,6 +130,11 @@ const EVENTS = {
     tone({ f0: 150, f1: 62, dur: 0.36, peak: 0.22, lp: 700 })
   },
   tierline: () => tone({ type: 'triangle', f0: 780, f1: 1560, dur: 0.07, peak: 0.13, lp: 2500 }),
+  // Crossing a named zone: two rising notes, a beat apart.
+  zone: () => {
+    tone({ type: 'triangle', f0: 660, dur: 0.12, peak: 0.14, lp: 3000 })
+    tone({ type: 'triangle', f0: 990, dur: 0.24, peak: 0.14, lp: 3000, delay: 0.11 })
+  },
   // The answer lifting off: a rising sweep where the dive had a falling one.
   lift: () => {
     tone({ f0: 1150, dur: 0.7, a: 0.01, peak: 0.1 })
